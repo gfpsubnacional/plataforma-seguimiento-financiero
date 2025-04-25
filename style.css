@@ -1,0 +1,295 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding-top: 60px;
+}
+
+h2, h3 {
+    color: #1C4574;
+    margin-bottom: 8px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    color: white;
+    width: 100%;
+    position: fixed;
+    height: 60px;
+    z-index: 20;
+    justify-content: space-between;
+    background-color: #6812b3;
+    padding: 5px;
+    top: 0; 
+}
+
+.header h5 {
+    font-size: 0.8em;
+    text-align: center;
+    margin: 0;
+}
+
+.logos {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+    justify-content: center;
+    gap: 10px;
+    overflow: hidden;
+}
+
+.logos img {
+    height: 40px;
+    width: auto;
+}
+
+.main-container {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: calc(100vh - 60px);
+    padding: 20px;
+    gap: 20px;
+}
+
+.top-section {
+    display: flex;
+    justify-content: space-between;
+    flex: 3;
+    gap: 20px;
+}
+
+.upload-box {
+    flex: 1;
+    border: 1px solid #ccc;
+    padding: 15px;
+    border-radius: 10px;
+    position: relative;
+}
+
+.info-button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+}
+
+.bottom-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+#manual-button {
+    position: fixed;
+    bottom: 10px;
+    right: 10px;
+    background-color: #6812b3;
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    z-index: 30;
+}
+
+.popup {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+}
+
+.popup.hidden {
+    display: none;
+}
+
+.popup-content {
+    background-color: rgb(255, 255, 255);
+    padding: 20px;
+    width: 80%;
+    height: 80%;
+    border-radius: 10px;
+    position: relative;
+}
+
+.popup-content iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+#popup-close {
+    position: absolute;
+    top: 2px;
+    right: 8px;
+    font-size: 25px;
+    cursor: pointer;
+}
+
+
+/* Estilo para botones de elegir archivo */
+.upload-box input[type="file"] {
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    right: 50%;
+    width: 90%;
+    transform: translate(-50%, -50%);
+    font-size: 16px;
+    color: #6812b3;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+
+.upload-box {
+    position: relative;
+    flex: 1;
+    border: 2px solid #6812b3;
+    padding: 15px;
+    border-radius: 10px;
+    text-align: center;
+    background-color: #f3f3f3;
+    transition: transform 0.3s ease;
+}
+
+.upload-box:hover {
+    transform: scale(1.05);
+    background-color: #e6e6e6;
+}
+
+
+/* Estilo para el botón de generar análisis */
+#process-btn {
+    background-color: #6812b3;
+    color: white;
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+#process-btn:hover {
+    background-color: #5a10a1;
+}
+
+/* Estilo para el botón de manual */
+#manual-button {
+    background-color: #3e8e41;
+    color: white;
+    padding: 10px 15px;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    z-index: 30;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+}
+
+#manual-button:hover {
+    background-color: #327a34;
+}
+
+
+/* Estilo para mostrar el nombre del archivo */
+.file-name {
+    display: block;
+    margin-top: 10px;
+    font-size: 14px;
+    color: #555;
+    font-style: italic;
+}
+
+/* Opcional: para cambiar el estilo cuando el archivo es seleccionado */
+.upload-box.selected {
+    border-color: #4CAF50;
+    background-color: #e1f5e1;
+}
+
+
+
+
+
+/* STYLES PARA LA AYUDA */
+
+.ayudacsv-container {
+    text-align: center;
+}
+.ayudacsv-title {
+    color: #333;
+    font-size: 1.5em;
+    margin-bottom: 20px;
+}
+
+.ayudacsv-text {
+    color: #555;
+    font-size: 1em;
+    line-height: 1.6;
+    margin-bottom: 20px;
+}
+
+.ayudacsv-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px 0;
+    text-align: left;
+}
+
+.ayudacsv-list li {
+    color: #444;
+    margin-bottom: 10px;
+}
+
+.ayudacsv-link {
+    color: #007bff;
+    text-decoration: none;
+}
+
+.ayudacsv-link:hover {
+    text-decoration: underline;
+}
+
+.ayudacsv-button {
+    background-color: #007bff;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    margin: 10px 5px;
+    border-radius: 5px;
+    font-size: 1em;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.ayudacsv-button:hover {
+    background-color: #0056b3;
+}
+
+.ayudacsv-link-btn {
+    display: inline-block;
+    text-decoration: none;
+}

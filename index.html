@@ -1,0 +1,58 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seguimiento Financiero</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.1/xlsx.full.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+    <header class="header">
+        <div class="logos">
+            <a href="https://www.gfpsubnacional.pe/inicio/"><img src="images/gfp_darkbg.png" alt="GFP Logo"></a>
+            <a href="https://cooperacionsuiza.pe/seco" target="_blank" rel="nofollow"><img src="images/suiza_darkbg.png" alt="Suiza Logo"></a>
+            <a href="https://baselgovernance.org" target="_blank" rel="nofollow"><img src="images/basel_darkbg.png" alt="Basel Logo"></a>
+            <h5>Seguimiento Financiero</h5>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="top-section">
+            <div class="upload-box">
+                <h3>Información CEPLAN</h3>
+                <input id="ceplan" type="file" accept=".csv">
+                <button class="info-button" data-popup="contenido1.html">ℹ️</button>
+            </div>
+            <div class="upload-box">
+                <h3>Información Consulta Amigable</h3>
+                <input id="ca" type="file" accept=".csv">
+                <button class="info-button" data-popup="contenido2.html">ℹ️</button>
+            </div>
+            <div class="upload-box">
+                <h3>Información SIGA</h3>
+                <input id="siga" type="file" accept=".csv">
+                <button class="info-button" data-popup="contenido3.html">ℹ️</button>
+            </div>
+        </div>
+
+        <div class="bottom-section">
+            <button id="process-btn">Generar análisis</button>
+            <a id="download-link" style="display: none">Descargar resultado</a>
+        </div>
+    </div>
+
+    <button id="manual-button" data-popup="manual.html">¿Cómo usar el aplicativo?</button>
+
+    <div id="popup" class="popup hidden">
+        <div class="popup-content">
+            <span id="popup-close">&times;</span>
+            <iframe id="popup-iframe" src="" frameborder="0"></iframe>
+        </div>
+    </div>
+
+    <script type="module" src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sube tu archivo CSV</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="ayudacsv-container">
+        <h1 class="ayudacsv-title">Sube tu archivo CSV (Consulta Amigable)</h1>
+
+        <p class="ayudacsv-text">
+            Aquí debe subir un CSV con información sobre su región y la categoría presupuestal a analizar,
+            proveniente de la página web de <strong>Consulta amigable</strong>. Si no sabe cómo obtener el CSV, atento:
+        </p>
+
+        <ul class="ayudacsv-list">
+            <li><strong>Opción 1:</strong> Ingrese a <a href="https://gfpsubnacional-scrapceca.streamlit.app/" target="_blank" class="ayudacsv-link">este enlace</a> y genere el archivo CSV.</li>
+            <li><strong>Opción 2:</strong> Descargue el archivo .exe, al abrirlo se generará el archivo CSV automáticamente para ti.</li>
+        </ul>
+
+        <a href="https://gfpsubnacional-scrapceplan.streamlit.app/" target="_blank" class="ayudacsv-button ayudacsv-link-btn">Generar CSV en Línea</a>
+        <button class="ayudacsv-button" onclick="window.location.href='scraper.exe'">Descargar .exe</button>
+    </div>
+</body>
+</html>
