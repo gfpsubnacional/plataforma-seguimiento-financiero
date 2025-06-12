@@ -214,17 +214,18 @@ const mostrarTab = (comparacion, contenedor) => {
     const tabla = document.createElement("table");
     tabla.className = "tabla-resultado";
 
-    const formatearCelda = (valor) => {
-        if (typeof valor === 'number') {
-            return `<div class="celda-scroll">${valor.toLocaleString('en-US')}</div>`;
+    const formatearCelda = (valor, esSuma = false) => {
+        const texto = String(valor).trim();
+
+        if (esSuma) {
+            // Solo si es fila de suma, intentamos convertir a número
+            const limpio = texto.replace(/[^\d.-]/g, '');
+            const num = parseFloat(limpio);
+            return `<div class="celda-scroll">${isNaN(num) ? '0' : num.toLocaleString('en-US')}</div>`;
         }
 
-        const texto = String(valor);
+        // Para todo lo demás, simplemente mostrar texto con scroll o lista
         if (!texto.includes(',')) {
-            const num = parseFloat(texto.replace(/\s/g, ''));
-            if (!isNaN(num)) {
-                return `<div class="celda-scroll">${num.toLocaleString('en-US')}</div>`;
-            }
             return `<div class="celda-scroll">${texto}</div>`;
         }
 
@@ -232,11 +233,7 @@ const mostrarTab = (comparacion, contenedor) => {
         return `
             <div class="celda-scroll">
                 <ul class="lista-viñetas">
-                    ${items.map(item => {
-                        const num = parseFloat(item.replace(/\s/g, ''));
-                        const mostrado = !isNaN(num) ? num.toLocaleString('en-US') : item;
-                        return `<li>${mostrado}</li>`;
-                    }).join('')}
+                    ${items.map(item => `<li>${item}</li>`).join('')}
                 </ul>
             </div>`;
     };
@@ -244,12 +241,15 @@ const mostrarTab = (comparacion, contenedor) => {
     tabla.innerHTML = `
         <thead><tr><th>Variable</th><th>${comparacion.nombre1}</th><th>${comparacion.nombre2}</th></tr></thead>
         <tbody>
-            ${comparacion.filas.map(f => `
-            <tr>
-                <td>${f[0]}</td>
-                <td>${formatearCelda(f[1])}</td>
-                <td>${formatearCelda(f[2])}</td>
-            </tr>`).join('')}
+            ${comparacion.filas.map(f => {
+                const esSuma = f[0].startsWith('Suma ');
+                return `
+                    <tr>
+                        <td>${f[0]}</td>
+                        <td>${formatearCelda(f[1], esSuma)}</td>
+                        <td>${formatearCelda(f[2], esSuma)}</td>
+                    </tr>`;
+            }).join('')}
         </tbody>
     `;
 
