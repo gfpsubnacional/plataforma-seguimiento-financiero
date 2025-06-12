@@ -62,17 +62,8 @@ h2, h3 {
 
 .top-section {
     display: flex;
-    justify-content: space-between;
-    flex: 3;
+    flex-direction: column; /* <--- cambio clave */
     gap: 20px;
-}
-
-.upload-box {
-    flex: 1;
-    border: 1px solid #ccc;
-    padding: 15px;
-    border-radius: 10px;
-    position: relative;
 }
 
 .info-button {
@@ -125,9 +116,9 @@ h2, h3 {
 }
 
 .popup-content {
-    background-color: rgb(255, 255, 255);
+    background-color: rgb(232, 232, 232);
     padding: 20px;
-    width: 80%;
+    width: 50%;
     height: 80%;
     border-radius: 10px;
     position: relative;
@@ -147,16 +138,18 @@ h2, h3 {
     cursor: pointer;
 }
 
+.upload-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    position: relative;
+}
 
-/* Estilo para botones de elegir archivo */
 .upload-box input[type="file"] {
-    display: block;
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    right: 50%;
-    width: 90%;
-    transform: translate(-50%, -50%);
+    position: static;
+    transform: none;
+    width: 100%;
     font-size: 16px;
     color: #6812b3;
     cursor: pointer;
@@ -174,6 +167,7 @@ h2, h3 {
     background-color: #f3f3f3;
     transition: transform 0.3s ease;
 }
+
 
 .upload-box:hover {
     transform: scale(1.05);
@@ -252,18 +246,6 @@ h2, h3 {
     margin-bottom: 20px;
 }
 
-.ayudacsv-list {
-    list-style: none;
-    padding: 0;
-    margin: 0 0 20px 0;
-    text-align: left;
-}
-
-.ayudacsv-list li {
-    color: #444;
-    margin-bottom: 10px;
-}
-
 .ayudacsv-link {
     color: #007bff;
     text-decoration: none;
@@ -292,4 +274,156 @@ h2, h3 {
 .ayudacsv-link-btn {
     display: inline-block;
     text-decoration: none;
+}
+
+
+
+/* Contenedor principal */
+#resultados-container {
+    margin-top: 2rem;
+    padding: 1rem;
+    font-family: "Segoe UI", sans-serif;
+    background: #fdfdfd;
+    border-radius: 12px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    position: relative; /* aún necesario para sticky interno */
+}
+
+
+/* Pestañas tipo Excel */
+.tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    border-bottom: 2px solid #ddd;
+    position: sticky;
+    top: 0;
+    background-color: white;
+    z-index: 10;
+}
+
+.tabs button {
+    background: #eee;
+    border: none;
+    padding: 0.6rem 1.2rem;
+    cursor: pointer;
+    font-weight: bold;
+    border-radius: 8px 8px 0 0;
+    transition: background 0.2s ease;
+}
+
+.tabs button:hover {
+    background: #ddd;
+}
+
+.tabs button.active {
+    background: #007bff;
+    color: white;
+    border-bottom: 2px solid white;
+}
+
+/* Área donde se muestra cada pestaña */
+.tab-content {
+    background: #fff;
+    padding: 1rem;
+    border-radius: 0 12px 12px 12px;
+    border: 1px solid #ddd;
+}
+
+/* Tabla de resultados */
+
+.tabla-resultado {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.95rem;
+    table-layout: fixed; /* Necesario para que funcionen los porcentajes */
+}
+
+
+.tabla-resultado th,
+.tabla-resultado td {
+    padding: 0.6rem;
+    border-bottom: 1px solid #ddd;
+    vertical-align: top;
+    white-space: normal;
+    overflow-wrap: break-word; /* Evita que textos largos rompan diseño */
+}
+
+.tabla-resultado th:nth-child(1),
+.tabla-resultado td:nth-child(1) {
+    width: 20%;
+}
+
+.tabla-resultado th:nth-child(2),
+.tabla-resultado td:nth-child(2),
+.tabla-resultado th:nth-child(3),
+.tabla-resultado td:nth-child(3) {
+    width: 40%;
+}
+
+
+
+
+.tabla-resultado th {
+    background: #007bff;
+    color: white;
+    padding: 0.7rem;
+    text-align: left;
+}
+
+.tabla-resultado td {
+    padding: 0.6rem;
+    border-bottom: 1px solid #ddd;
+    vertical-align: top;
+    white-space: normal;
+}
+
+.tabla-resultado tbody td {
+    padding: 8px;
+    box-sizing: border-box;
+}
+
+
+.celda-scroll {
+    max-height: 150px;
+    overflow-y: auto;
+    white-space: normal;
+}
+
+.lista-viñetas {
+    margin: 0;
+    padding-left: 1rem;
+}
+
+.lista-viñetas li {
+    list-style-type: disc;
+    margin-bottom: 0.2rem;
+}
+
+
+.tabla-resultado tr:nth-child(even) {
+    background: #f9f9f9;
+}
+
+.tabla-resultado tr:hover {
+    background: #f1f1f1;
+}
+
+.tabla-resultado ul.lista-viñetas {
+    list-style-type: disc;
+    padding-left: 20px;
+    margin: 0;
+}
+
+.tabla-resultado ul.lista-viñetas li {
+    margin-bottom: 2px;
+    font-size: 0.9em;
+}
+
+
+.grafico-compacto {
+    width: 600px;      /* o el tamaño que prefieras */
+    height: 600px;     /* ajusta la altura según tu necesidad */
+    display: block;
+    margin: 20px auto; /* para centrar horizontalmente */
 }

@@ -1,4 +1,3 @@
-<!-- index.html -->
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -8,6 +7,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.1/xlsx.full.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jschardet/3.0.0/jschardet.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" type="text/css" href="style.css">
 </head>
 <body>
@@ -20,22 +20,39 @@
         </div>
     </header>
 
+    <div id="resultados-container"></div>
+
     <div class="main-container">
         <div class="top-section">
+
             <div class="upload-box">
-                <h3>Información CEPLAN</h3>
-                <input id="ceplan" type="file" accept=".csv, .txt">
-                <button class="info-button" data-popup="contenido1.html">ℹ️</button>
+                <div class="upload-header">
+                    <h3>Información CEPLAN</h3>
+                    <button class="info-button" data-popup="contenido1.html">ℹ️</button>
+                </div>
+                <div class="upload-input">
+                    <input id="ceplan" type="file" accept=".csv, .txt">
+                </div>
             </div>
+
             <div class="upload-box">
-                <h3>Información Consulta Amigable</h3>
-                <input id="ca" type="file" accept=".csv, .txt">
-                <button class="info-button" data-popup="contenido2.html">ℹ️</button>
+                <div class="upload-header">
+                    <h3>Información CA</h3>
+                    <button class="info-button" data-popup="contenido1.html">ℹ️</button>
+                </div>
+                <div class="upload-input">
+                    <input id="ca" type="file" accept=".csv, .txt">
+                </div>
             </div>
+
             <div class="upload-box">
-                <h3>Información SIGA</h3>
-                <input id="siga" type="file" accept=".csv, .txt">
-                <button class="info-button" data-popup="contenido3.html">ℹ️</button>
+                <div class="upload-header">
+                    <h3>Información SIGA</h3>
+                    <button class="info-button" data-popup="contenido1.html">ℹ️</button>
+                </div>
+                <div class="upload-input">
+                    <input id="siga" type="file" accept=".csv, .txt">
+                </div>
             </div>
         </div>
 
@@ -54,6 +71,6 @@
         </div>
     </div>
 
-    <script type="module" src="script.js"></script>
+    <script type="module" src="script2.js"></script>
 </body>
 </html>
