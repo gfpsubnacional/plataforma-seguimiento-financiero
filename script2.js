@@ -6,6 +6,9 @@ window.addEventListener('beforeunload', () => {
 
 window.archivosCSV = {};
 
+// Global state for selected subgenericas, now for CA and SIGA
+window.selectedSubgenericasCA = [];
+window.selectedSubgenericasSIGA = []; // Changed from CEPLAN
 
 const coloresInstitucionales = {
     'CA': {
@@ -63,9 +66,16 @@ document.querySelectorAll('input[type="file"]').forEach((input) => {
                 try {
                     csvData = new TextDecoder("utf-8", { fatal: true }).decode(uint8Array);
                     console.log("Decodificado correctamente como UTF-8");
-                } catch {
-                    csvData = new TextDecoder("windows-1252", { fatal: false }).decode(uint8Array);
-                    console.log("Decodificado como fallback: Windows-1252");
+                } catch (error) {
+                    // Fallback to windows-1252 with error logging for debugging
+                    try {
+                        csvData = new TextDecoder("windows-1252", { fatal: false }).decode(uint8Array);
+                        console.log("Decodificado como fallback: Windows-1252");
+                    } catch (decodeError) {
+                        console.error(`Error decoding with windows-1252: ${decodeError.message}`);
+                        alert(`No se pudo decodificar el archivo ${file.name}. Intente con otra codificación o verifique el archivo.`);
+                        return;
+                    }
                 }
 
                 const isTxt = file.name.toLowerCase().endsWith('.txt');
@@ -87,6 +97,12 @@ document.querySelectorAll('input[type="file"]').forEach((input) => {
 
                         window.archivosCSV[inputId] = data;
                         console.log(`Archivo cargado (${inputId}):`, data);
+
+                        // If CA or SIGA are loaded, update the subgenerica filter
+                        // This call remains here to ensure filter options are ready when the modal eventually opens
+                        if (inputId === 'ca' || inputId === 'siga') {
+                            updateSubgenericaFilter();
+                        }
                     }
                 });
             };
@@ -136,9 +152,9 @@ const normalizarClaves = (data) => {
 };
 
 document.getElementById('process-btn').addEventListener('click', () => {
-    const caRaw = window.archivosCSV['ca'];
+    let caRaw = window.archivosCSV['ca'];
     const ceplanRaw = window.archivosCSV['ceplan'];
-    const sigaRaw = window.archivosCSV['siga'];
+    let sigaRaw = window.archivosCSV['siga'];
 
     const faltan = [];
     if (!caRaw) faltan.push('CA');
@@ -150,9 +166,33 @@ document.getElementById('process-btn').addEventListener('click', () => {
         return;
     }
 
-    const caJson = normalizarClaves(caRaw);
+    // Apply subgenerica filter for CA
+    let filteredCaData = caRaw;
+    if (window.selectedSubgenericasCA.length > 0) {
+        filteredCaData = caRaw.filter(row => {
+            const tempNormalizedRow = {};
+            for (const key in row) {
+                tempNormalizedRow[normalizacionColumnas[key] || key] = row[key];
+            }
+            return window.selectedSubgenericasCA.includes(tempNormalizedRow.subgenerica);
+        });
+    }
+
+    // Apply subgenerica filter for SIGA
+    let filteredSigaData = sigaRaw;
+    if (window.selectedSubgenericasSIGA.length > 0) {
+        filteredSigaData = sigaRaw.filter(row => {
+            const tempNormalizedRow = {};
+            for (const key in row) {
+                tempNormalizedRow[normalizacionColumnas[key] || key] = row[key];
+            }
+            return window.selectedSubgenericasSIGA.includes(tempNormalizedRow.subgenerica);
+        });
+    }
+
+    const caJson = normalizarClaves(filteredCaData);
     const ceplanJson = normalizarClaves(ceplanRaw);
-    const sigaJson = normalizarClaves(sigaRaw);
+    const sigaJson = normalizarClaves(filteredSigaData);
 
     const columnasNumericas = [
         'DEV', 'PIA', 'PIM', 'Girado',
@@ -204,19 +244,52 @@ document.getElementById('process-btn').addEventListener('click', () => {
         ['sector', 'pliego', 'ejecutora', 'categoria_pptal', 'prod_proy', 'c_costo', 'generica', 'subgenerica'],
         ['ITEM_IMPORTE', 'POI_aprobado', 'POI_consistente_PIA', 'POI modificado']);
 
+    // Corrected function call
     mostrarResultadosVisuales(comparaciones);
 });
 
 // === Mostrar resultados en la web ===
+// Renamed function back to original name: mostrarResultadosVisuales
 const mostrarResultadosVisuales = (comparaciones) => {
     // Verificar si ya existe el contenedor, si no, crearlo y colocarlo en el DOM
     let container = document.getElementById("resultados-container");
     if (!container) {
         container = document.createElement("div");
         container.id = "resultados-container";
-        document.body.insertBefore(container, document.querySelector(".main-container")); // Insertar antes de la interfaz de carga
+        // Insert before the main-container to place it at the top
+        const mainContainer = document.querySelector('.main-container');
+        if (mainContainer) {
+            document.body.insertBefore(container, mainContainer);
+        } else {
+            document.body.appendChild(container); // Fallback if main-container not found
+        }
     }
     container.innerHTML = '';
+
+    // Create the filter button and insert it at the top of the results container
+    let filterButtonContainer = document.getElementById('filter-button-container');
+    if (!filterButtonContainer) {
+        filterButtonContainer = document.createElement('div');
+        filterButtonContainer.id = 'filter-button-container';
+        filterButtonContainer.style.textAlign = 'center';
+        filterButtonContainer.style.marginBottom = '20px';
+        container.appendChild(filterButtonContainer); // Append to the results container first
+    }
+    filterButtonContainer.innerHTML = ''; // Clear previous button if any
+
+    const filterButton = document.createElement('button');
+    filterButton.id = 'filter-subgenerica-btn';
+    filterButton.textContent = '⚙️ Filtrar por Subgenérica';
+    filterButton.className = 'btn-filter';
+    filterButtonContainer.appendChild(filterButton);
+
+    filterButton.addEventListener('click', () => {
+        const modal = document.getElementById('subgenerica-filter-modal');
+        if (modal) {
+            modal.classList.remove('hidden');
+            updateSubgenericaFilter(); // Ensure filter options are updated when modal opens
+        }
+    });
 
     // Crear encabezado de tabs
     const tabHeader = document.createElement("div");
@@ -235,6 +308,7 @@ const mostrarResultadosVisuales = (comparaciones) => {
             html2canvas: { scale: 2 },
             jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
         };
+        // Use the container to generate the PDF
         html2pdf().set(opt).from(container).save();
     });
 
@@ -261,11 +335,14 @@ const mostrarResultadosVisuales = (comparaciones) => {
         tabHeader.appendChild(tabBtn);
     });
 
+    // Insert tabWrapper and tabContent AFTER the filterButtonContainer
     container.appendChild(tabWrapper);
     container.appendChild(tabContent);
 
     // Mostrar la primera pestaña
-    mostrarTab(comparaciones[0], tabContent);
+    if (comparaciones.length > 0) {
+        mostrarTab(comparaciones[0], tabContent);
+    }
 };
 
 const mostrarTab = (comparacion, contenedor) => {
@@ -295,7 +372,8 @@ const mostrarTab = (comparacion, contenedor) => {
                 <ul class="lista-viñetas">
                     ${items.map(item => `<li>${item}</li>`).join('')}
                 </ul>
-            </div>`;
+            </div>
+        `;
     };
 
     tabla.innerHTML = `
@@ -322,11 +400,11 @@ const mostrarTab = (comparacion, contenedor) => {
                         <td style="background-color: ${coloresInstitucionales[comparacion.nombre2]?.fondoTabla};">
                             ${formatearCelda(f[2], esSuma)}
                         </td>
-                    </tr>`;
+                    </tr>
+                `;
             }).join('')}
         </tbody>
     `;
-
     contenedor.appendChild(tabla);
 
     const canvas = document.createElement("canvas");
@@ -363,4 +441,146 @@ const mostrarTab = (comparacion, contenedor) => {
             }
         }
     });
+};
+
+// --- New Subgenerica Filter Logic ---
+
+// The filter button and modal are now created and managed within mostrarResultadosVisuales
+document.addEventListener('DOMContentLoaded', () => {
+    // Dynamically create and append the filter modal (it will be hidden by default)
+    const filterModal = document.createElement('div');
+    filterModal.id = 'subgenerica-filter-modal';
+    filterModal.className = 'filter-modal hidden'; // Hidden by default
+
+    filterModal.innerHTML = `
+        <div class="filter-modal-content">
+            <span class="close-button" id="filter-modal-close">&times;</span>
+            <h2>Filtrar por Subgenérica</h2>
+            <div class="filter-sections">
+                <div class="filter-section">
+                    <h3>CA Subgenéricas</h3>
+                    <div id="ca-subgenericas" class="subgenerica-list">
+                        </div>
+                </div>
+                <div class="filter-section">
+                    <h3>SIGA Subgenéricas</h3>
+                    <div id="siga-subgenericas" class="subgenerica-list">
+                        </div>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(filterModal);
+
+    // Add event listener to close the filter modal
+    document.getElementById('filter-modal-close').addEventListener('click', () => {
+        document.getElementById('subgenerica-filter-modal').classList.add('hidden');
+    });
+
+    // No initial call to updateSubgenericaFilter or button creation here anymore
+});
+
+// Function to update and display the subgenerica filter
+const updateSubgenericaFilter = () => {
+    const caData = window.archivosCSV['ca'];
+    const sigaData = window.archivosCSV['siga'];
+
+    const caSubgenericasDiv = document.getElementById('ca-subgenericas');
+    const sigaSubgenericasDiv = document.getElementById('siga-subgenericas');
+
+    if (!caSubgenericasDiv || !sigaSubgenericasDiv) return; // Ensure elements exist
+
+    caSubgenericasDiv.innerHTML = '';
+    sigaSubgenericasDiv.innerHTML = '';
+
+    // Extract unique subgenericas from normalized data
+    const getUniqueSubgenericas = (data) => {
+        if (!data) return [];
+        // Normalizing here to ensure 'subgenerica' key exists before extracting
+        const normalizedData = data.map(obj => {
+            const nuevo = {};
+            for (const key in obj) {
+                const claveNormalizada = normalizacionColumnas[key] || key;
+                nuevo[claveNormalizada] = obj[key];
+            }
+            return nuevo;
+        });
+        return [...new Set(normalizedData.map(row => row.subgenerica).filter(Boolean))].sort();
+    };
+
+    const uniqueCASubgenericas = getUniqueSubgenericas(caData);
+    const uniqueSIGASubgenericas = getUniqueSubgenericas(sigaData);
+
+    // Initialize selectedSubgenericas if they are empty (first load or new file)
+    // and if there are actual subgenericas to select
+    if (window.selectedSubgenericasCA.length === 0 && uniqueCASubgenericas.length > 0) {
+        window.selectedSubgenericasCA = [...uniqueCASubgenericas];
+    } else {
+        // If unique subgenericas change (e.g., new file loaded), filter out old selected ones
+        window.selectedSubgenericasCA = window.selectedSubgenericasCA.filter(sg => uniqueCASubgenericas.includes(sg));
+        // If after filtering, no subgenericas are selected but there are new ones, select all new ones
+        if (window.selectedSubgenericasCA.length === 0 && uniqueCASubgenericas.length > 0) {
+            window.selectedSubgenericasCA = [...uniqueCASubgenericas];
+        }
+    }
+
+    // Logic for SIGA Subgenericas
+    if (window.selectedSubgenericasSIGA.length === 0 && uniqueSIGASubgenericas.length > 0) {
+        window.selectedSubgenericasSIGA = [...uniqueSIGASubgenericas];
+    } else {
+        window.selectedSubgenericasSIGA = window.selectedSubgenericasSIGA.filter(sg => uniqueSIGASubgenericas.includes(sg));
+        if (window.selectedSubgenericasSIGA.length === 0 && uniqueSIGASubgenericas.length > 0) {
+            window.selectedSubgenericasSIGA = [...uniqueSIGASubgenericas];
+        }
+    }
+
+
+    const createCheckboxList = (subgenericas, datasetName, selectedList, containerDiv) => {
+        if (subgenericas.length === 0) {
+            containerDiv.innerHTML = '<p>No hay subgenéricas disponibles.</p>';
+            return;
+        }
+        subgenericas.forEach(sg => {
+            const checkboxDiv = document.createElement('div');
+            checkboxDiv.className = 'checkbox-item';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `${datasetName}-${sg.replace(/[^a-zA-Z0-9]/g, '_')}`; // Sanitize ID for special chars
+            checkbox.value = sg;
+            checkbox.checked = selectedList.includes(sg);
+
+            const label = document.createElement('label');
+            label.htmlFor = `${datasetName}-${sg.replace(/[^a-zA-Z0-9]/g, '_')}`;
+            label.textContent = sg;
+
+            checkbox.addEventListener('change', (event) => {
+                if (datasetName === 'ca') {
+                    if (event.target.checked) {
+                        window.selectedSubgenericasCA.push(sg);
+                    } else {
+                        window.selectedSubgenericasCA = window.selectedSubgenericasCA.filter(item => item !== sg);
+                    }
+                } else if (datasetName === 'siga') {
+                    if (event.target.checked) {
+                        window.selectedSubgenericasSIGA.push(sg);
+                    } else {
+                        window.selectedSubgenericasSIGA = window.selectedSubgenericasSIGA.filter(item => item !== sg);
+                    }
+                }
+                // Trigger re-processing and re-rendering
+                // Only if all necessary files are already loaded.
+                if (window.archivosCSV['ca'] && window.archivosCSV['ceplan'] && window.archivosCSV['siga']) {
+                    document.getElementById('process-btn').click();
+                }
+            });
+
+            checkboxDiv.appendChild(checkbox);
+            checkboxDiv.appendChild(label);
+            containerDiv.appendChild(checkboxDiv);
+        });
+    };
+
+    createCheckboxList(uniqueCASubgenericas, 'ca', window.selectedSubgenericasCA, caSubgenericasDiv);
+    createCheckboxList(uniqueSIGASubgenericas, 'siga', window.selectedSubgenericasSIGA, sigaSubgenericasDiv);
 };
