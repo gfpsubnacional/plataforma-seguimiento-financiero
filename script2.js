@@ -34,6 +34,22 @@ const coloresInstitucionales = {
     }
 };
 
+// --- Funciones para mostrar/ocultar el popup de carga ---
+const showLoading = () => {
+    const loadingOverlay = document.getElementById('loading-overlay');
+    if (loadingOverlay) {
+        loadingOverlay.classList.remove('hidden');
+    }
+};
+
+const hideLoading = () => {
+    const loadingOverlay = document.getElementById('loading-overlay');
+    if (loadingOverlay) {
+        loadingOverlay.classList.add('hidden');
+    }
+};
+// --------------------------------------------------------
+
 
 // Manejo de carga de archivos
 document.querySelectorAll('input[type="file"]').forEach((input) => {
@@ -41,6 +57,7 @@ document.querySelectorAll('input[type="file"]').forEach((input) => {
         const file = event.target.files[0];
         const inputId = input.id;
         if (file) {
+            showLoading(); // Muestra el popup de carga al inicio de la subida
             const reader = new FileReader();
             reader.onload = (e) => {
                 const arrayBuffer = e.target.result;
@@ -74,6 +91,7 @@ document.querySelectorAll('input[type="file"]').forEach((input) => {
                     } catch (decodeError) {
                         console.error(`Error decoding with windows-1252: ${decodeError.message}`);
                         alert(`No se pudo decodificar el archivo ${file.name}. Intente con otra codificación o verifique el archivo.`);
+                        hideLoading(); // Oculta el popup si hay un error
                         return;
                     }
                 }
@@ -92,6 +110,7 @@ document.querySelectorAll('input[type="file"]').forEach((input) => {
 
                         if (data.length === 0) {
                             alert(`El archivo "${file.name}" no contiene datos válidos.`);
+                            hideLoading(); // Oculta el popup si el archivo está vacío
                             return;
                         }
 
@@ -99,10 +118,10 @@ document.querySelectorAll('input[type="file"]').forEach((input) => {
                         console.log(`Archivo cargado (${inputId}):`, data);
 
                         // If CA or SIGA are loaded, update the subgenerica filter
-                        // This call remains here to ensure filter options are ready when the modal eventually opens
                         if (inputId === 'ca' || inputId === 'siga') {
                             updateSubgenericaFilter();
                         }
+                        hideLoading(); // Oculta el popup cuando el procesamiento del archivo termina
                     }
                 });
             };
@@ -152,6 +171,7 @@ const normalizarClaves = (data) => {
 };
 
 document.getElementById('process-btn').addEventListener('click', () => {
+    showLoading(); // Muestra el popup de carga al presionar "Generar Análisis"
     let caRaw = window.archivosCSV['ca'];
     const ceplanRaw = window.archivosCSV['ceplan'];
     let sigaRaw = window.archivosCSV['siga'];
@@ -163,6 +183,7 @@ document.getElementById('process-btn').addEventListener('click', () => {
 
     if (faltan.length) {
         alert('Faltan los siguientes archivos: ' + faltan.join(', '));
+        hideLoading(); // Oculta el popup si faltan archivos
         return;
     }
 
@@ -172,7 +193,8 @@ document.getElementById('process-btn').addEventListener('click', () => {
         filteredCaData = caRaw.filter(row => {
             const tempNormalizedRow = {};
             for (const key in row) {
-                tempNormalizedRow[normalizacionColumnas[key] || key] = row[key];
+                const claveNormalizada = normalizacionColumnas[key] || key;
+                tempNormalizedRow[claveNormalizada] = row[key];
             }
             return window.selectedSubgenericasCA.includes(tempNormalizedRow.subgenerica);
         });
@@ -184,7 +206,8 @@ document.getElementById('process-btn').addEventListener('click', () => {
         filteredSigaData = sigaRaw.filter(row => {
             const tempNormalizedRow = {};
             for (const key in row) {
-                tempNormalizedRow[normalizacionColumnas[key] || key] = row[key];
+                const claveNormalizada = normalizacionColumnas[key] || key;
+                tempNormalizedRow[claveNormalizada] = row[key];
             }
             return window.selectedSubgenericasSIGA.includes(tempNormalizedRow.subgenerica);
         });
@@ -244,12 +267,11 @@ document.getElementById('process-btn').addEventListener('click', () => {
         ['sector', 'pliego', 'ejecutora', 'categoria_pptal', 'prod_proy', 'c_costo', 'generica', 'subgenerica'],
         ['ITEM_IMPORTE', 'POI_aprobado', 'POI_consistente_PIA', 'POI modificado']);
 
-    // Corrected function call
     mostrarResultadosVisuales(comparaciones);
+    hideLoading(); // Oculta el popup cuando los resultados están listos
 });
 
 // === Mostrar resultados en la web ===
-// Renamed function back to original name: mostrarResultadosVisuales
 const mostrarResultadosVisuales = (comparaciones) => {
     // Verificar si ya existe el contenedor, si no, crearlo y colocarlo en el DOM
     let container = document.getElementById("resultados-container");
@@ -443,9 +465,8 @@ const mostrarTab = (comparacion, contenedor) => {
     });
 };
 
-// --- New Subgenerica Filter Logic ---
+// --- Subgenerica Filter Logic (remains largely the same) ---
 
-// The filter button and modal are now created and managed within mostrarResultadosVisuales
 document.addEventListener('DOMContentLoaded', () => {
     // Dynamically create and append the filter modal (it will be hidden by default)
     const filterModal = document.createElement('div');
@@ -477,7 +498,19 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('subgenerica-filter-modal').classList.add('hidden');
     });
 
-    // No initial call to updateSubgenericaFilter or button creation here anymore
+    // --- Add the loading overlay HTML to the body on DOMContentLoaded ---
+    const loadingOverlay = document.createElement('div');
+    loadingOverlay.id = 'loading-overlay';
+    loadingOverlay.className = 'loading-overlay hidden';
+    loadingOverlay.innerHTML = `
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Cargando...</div>
+        </div>
+    `;
+    document.body.appendChild(loadingOverlay);
+    // -----------------------------------------------------------------
+
 });
 
 // Function to update and display the subgenerica filter

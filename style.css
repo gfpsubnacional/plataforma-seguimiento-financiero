@@ -460,6 +460,8 @@ h2, h3 {
 
 
 
+
+
 /* Filter Button Styling */
 .btn-filter {
     background-color: #4CAF50; /* Green */
@@ -598,4 +600,56 @@ h2, h3 {
 
 
 
+
+
+
+
+/* --- Estilos para el Popup de Carga (Loading Spinner) --- */
+.loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.6); /* Fondo semi-transparente oscuro */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999; /* Asegura que esté por encima de todo */
+    transition: opacity 0.3s ease; /* Transición suave para aparecer/desaparecer */
+}
+
+.loading-overlay.hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none; /* Permite clics a través cuando está oculto */
+}
+
+.loading-spinner {
+    border: 8px solid #f3f3f3; /* Color claro del spinner */
+    border-top: 8px solid #6812b3; /* Color principal del spinner (morado de tu header) */
+    border-radius: 50%;
+    width: 60px;
+    height: 60px;
+    animation: spin 1s linear infinite; /* Animación de giro */
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Opcional: Texto de "Cargando..." */
+.loading-text {
+    color: white;
+    font-size: 1.2em;
+    margin-top: 15px;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.5);
+}
+
+.loading-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
 
