@@ -295,6 +295,7 @@ h2, h3 {
 
 
 /* Pestañas tipo Excel */
+
 .tabs {
     display: flex;
     gap: 0.5rem;
@@ -321,7 +322,7 @@ h2, h3 {
 }
 
 .tabs button.active {
-    background: #007bff;
+    background: #6812b3;
     color: white;
     border-bottom: 2px solid white;
 }
@@ -369,7 +370,7 @@ h2, h3 {
 
 
 .tabla-resultado th {
-    background: #007bff;
+    background: #757575;
     color: white;
     padding: 0.7rem;
     text-align: left;
@@ -430,4 +431,29 @@ h2, h3 {
     height: 600px;     /* ajusta la altura según tu necesidad */
     display: block;
     margin: 20px auto; /* para centrar horizontalmente */
+}
+
+
+
+.tab-wrapper {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-descargar-pdf {
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: background 0.2s ease;
+}
+
+.btn-descargar-pdf:hover {
+    background-color: #388e3c;
 }

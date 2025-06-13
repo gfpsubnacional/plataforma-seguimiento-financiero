@@ -6,6 +6,32 @@ window.addEventListener('beforeunload', () => {
 
 window.archivosCSV = {};
 
+
+const coloresInstitucionales = {
+    'CA': {
+        nombre: 'CA',
+        colorHex: '#36A2EB',
+        colorRGBA: 'rgba(54,162,235,0.6)',
+        fondoTabla: 'rgba(54,162,235,0.1)',
+        fondoOscuro: '#2b7bb9'
+    },
+    'CEPLAN': {
+        nombre: 'CEPLAN',
+        colorHex: '#FF6384',
+        colorRGBA: 'rgba(255,99,132,0.6)',
+        fondoTabla: 'rgba(255,99,132,0.1)',
+        fondoOscuro: '#cc4d6a'
+    },
+    'SIGA': {
+        nombre: 'SIGA',
+        colorHex: '#90EE90',
+        colorRGBA: 'rgba(144,238,144,0.6)',
+        fondoTabla: 'rgba(144,238,144,0.1)',
+        fondoOscuro: '#62c462'
+    }
+};
+
+
 // Manejo de carga de archivos
 document.querySelectorAll('input[type="file"]').forEach((input) => {
     input.addEventListener('change', (event) => {
@@ -183,14 +209,46 @@ document.getElementById('process-btn').addEventListener('click', () => {
 
 // === Mostrar resultados en la web ===
 const mostrarResultadosVisuales = (comparaciones) => {
-    const container = document.getElementById("resultados-container");
+    // Verificar si ya existe el contenedor, si no, crearlo y colocarlo en el DOM
+    let container = document.getElementById("resultados-container");
+    if (!container) {
+        container = document.createElement("div");
+        container.id = "resultados-container";
+        document.body.insertBefore(container, document.querySelector(".main-container")); // Insertar antes de la interfaz de carga
+    }
     container.innerHTML = '';
 
+    // Crear encabezado de tabs
     const tabHeader = document.createElement("div");
     tabHeader.className = "tabs";
+
+    // Crear botón PDF a la derecha
+    const botonPDF = document.createElement("button");
+    botonPDF.id = "descargar-pdf-btn";
+    botonPDF.textContent = "📄 Descargar PDF";
+    botonPDF.className = "btn-descargar-pdf";
+    botonPDF.addEventListener('click', () => {
+        const opt = {
+            margin: 0.5,
+            filename: 'reporte_comparativo.pdf',
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2 },
+            jsPDF: { unit: 'in', format: 'a4', orientation: 'portrait' }
+        };
+        html2pdf().set(opt).from(container).save();
+    });
+
+    // Agrupar tabs y botón en wrapper
+    const tabWrapper = document.createElement("div");
+    tabWrapper.className = "tab-wrapper";
+    tabWrapper.appendChild(tabHeader);
+    tabWrapper.appendChild(botonPDF);
+
+    // Crear contenido de tabs
     const tabContent = document.createElement("div");
     tabContent.className = "tab-content";
 
+    // Generar botones de tabs
     comparaciones.forEach((comp, i) => {
         const tabBtn = document.createElement("button");
         tabBtn.textContent = comp.titulo;
@@ -203,8 +261,10 @@ const mostrarResultadosVisuales = (comparaciones) => {
         tabHeader.appendChild(tabBtn);
     });
 
-    container.appendChild(tabHeader);
+    container.appendChild(tabWrapper);
     container.appendChild(tabContent);
+
+    // Mostrar la primera pestaña
     mostrarTab(comparaciones[0], tabContent);
 };
 
@@ -239,15 +299,29 @@ const mostrarTab = (comparacion, contenedor) => {
     };
 
     tabla.innerHTML = `
-        <thead><tr><th>Variable</th><th>${comparacion.nombre1}</th><th>${comparacion.nombre2}</th></tr></thead>
+        <thead>
+            <tr>
+                <th>Variable</th>
+                <th style="background-color: ${coloresInstitucionales[comparacion.nombre1]?.fondoOscuro}; color: white;">
+                    ${comparacion.nombre1}
+                </th>
+                <th style="background-color: ${coloresInstitucionales[comparacion.nombre2]?.fondoOscuro}; color: white;">
+                    ${comparacion.nombre2}
+                </th>
+            </tr>
+        </thead>
         <tbody>
             ${comparacion.filas.map(f => {
                 const esSuma = f[0].startsWith('Suma ');
                 return `
                     <tr>
                         <td>${f[0]}</td>
-                        <td>${formatearCelda(f[1], esSuma)}</td>
-                        <td>${formatearCelda(f[2], esSuma)}</td>
+                        <td style="background-color: ${coloresInstitucionales[comparacion.nombre1]?.fondoTabla};">
+                            ${formatearCelda(f[1], esSuma)}
+                        </td>
+                        <td style="background-color: ${coloresInstitucionales[comparacion.nombre2]?.fondoTabla};">
+                            ${formatearCelda(f[2], esSuma)}
+                        </td>
                     </tr>`;
             }).join('')}
         </tbody>
@@ -260,7 +334,7 @@ const mostrarTab = (comparacion, contenedor) => {
     contenedor.appendChild(canvas);
 
     const sumas = comparacion.filas.filter(f => f[0].startsWith("Suma "));
-    const labels = sumas.map(f => f[0]);
+    const labels = sumas.map(f => f[0].replace('Suma ', ''));
     const datos1 = sumas.map(f => parseFloat(f[1]));
     const datos2 = sumas.map(f => parseFloat(f[2]));
 
@@ -269,8 +343,16 @@ const mostrarTab = (comparacion, contenedor) => {
         data: {
             labels,
             datasets: [
-                { label: comparacion.nombre1, data: datos1, backgroundColor: 'rgba(54,162,235,0.6)' },
-                { label: comparacion.nombre2, data: datos2, backgroundColor: 'rgba(255,99,132,0.6)' }
+                {
+                    label: comparacion.nombre1,
+                    data: datos1,
+                    backgroundColor: coloresInstitucionales[comparacion.nombre1]?.colorRGBA || 'gray'
+                },
+                {
+                    label: comparacion.nombre2,
+                    data: datos2,
+                    backgroundColor: coloresInstitucionales[comparacion.nombre2]?.colorRGBA || 'gray'
+                }
             ]
         },
         options: {
