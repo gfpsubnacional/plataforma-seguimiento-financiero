@@ -62,8 +62,11 @@ h2, h3 {
 
 .top-section {
     display: flex;
-    flex-direction: column; /* <--- cambio clave */
+    flex-direction: column;
+    align-items: center; /* centers children horizontally */
     gap: 20px;
+    margin: 0 auto;       /* centers the whole section if it has a set width */
+    width: 100%;
 }
 
 .info-button {
@@ -156,10 +159,10 @@ h2, h3 {
     font-weight: bold;
 }
 
-
 .upload-box {
     position: relative;
     flex: 1;
+    width: 95%;
     border: 2px solid #6812b3;
     padding: 15px;
     border-radius: 10px;
@@ -168,11 +171,17 @@ h2, h3 {
     transition: transform 0.3s ease;
 }
 
-
 .upload-box:hover {
     transform: scale(1.05);
     background-color: #e6e6e6;
 }
+
+/* Opcional: para cambiar el estilo cuando el archivo es seleccionado */
+.upload-box.selected {
+    border-color: #4CAF50;
+    background-color: #e1f5e1;
+}
+
 
 
 /* Estilo para el botón de generar análisis */
@@ -218,11 +227,6 @@ h2, h3 {
     font-style: italic;
 }
 
-/* Opcional: para cambiar el estilo cuando el archivo es seleccionado */
-.upload-box.selected {
-    border-color: #4CAF50;
-    background-color: #e1f5e1;
-}
 
 
 
