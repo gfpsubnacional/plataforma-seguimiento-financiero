@@ -243,12 +243,15 @@ document.getElementById('process-btn').addEventListener('click', () => {
 
     const comparaciones = [];
 
+    // MODIFICACIÓN CLAVE AQUÍ: obtenerUnicos ahora devuelve un ARRAY
     const construirComparacion = (data1, data2, data1Num, data2Num, nombre1, nombre2, listar, sumar) => {
-        const obtenerUnicos = (data, col) => [...new Set(data.map(x => x[col]).filter(Boolean))].sort().join(', ');
+        // Esta función ahora devuelve un ARRAY de strings únicos
+        const obtenerUnicos = (data, col) => [...new Set(data.map(x => x[col]).filter(Boolean))].sort();
         const sumarColumna = (data, col) => Math.round(data.reduce((acc, x) => acc + (parseFloat(x[col]) || 0), 0) * 100) / 100;
 
         const filas = [];
 
+        // Ahora pasamos el ARRAY de strings a la fila
         listar.forEach(col => filas.push([col, obtenerUnicos(data1, col), obtenerUnicos(data2, col)]));
         sumar.forEach(col => filas.push([`Suma ${col}`, sumarColumna(data1Num, col), sumarColumna(data2Num, col)]));
 
@@ -373,29 +376,34 @@ const mostrarTab = (comparacion, contenedor) => {
     const tabla = document.createElement("table");
     tabla.className = "tabla-resultado";
 
+    // MODIFICACIÓN CLAVE AQUÍ: formatearCelda ahora espera un ARRAY
     const formatearCelda = (valor, esSuma = false) => {
-        const texto = String(valor).trim();
-
         if (esSuma) {
-            // Solo si es fila de suma, intentamos convertir a número
+            // Esto sigue siendo para números
+            const texto = String(valor).trim();
             const limpio = texto.replace(/[^\d.-]/g, '');
             const num = parseFloat(limpio);
             return `<div class="celda-scroll">${isNaN(num) ? '0' : num.toLocaleString('en-US')}</div>`;
         }
 
-        // Para todo lo demás, simplemente mostrar texto con scroll o lista
-        if (!texto.includes(',')) {
-            return `<div class="celda-scroll">${texto}</div>`;
+        // Si valor es un ARRAY, asumimos que son los elementos de la lista
+        if (Array.isArray(valor)) {
+            // Filtra elementos vacíos y genera la lista de viñetas
+            const items = valor.filter(t => t !== null && t !== undefined && String(t).trim() !== '');
+            if (items.length === 0) {
+                return `<div class="celda-scroll"></div>`; // Retorna vacío si no hay elementos válidos
+            }
+            return `
+                <div class="celda-scroll">
+                    <ul class="lista-viñetas">
+                        ${items.map(item => `<li>${item}</li>`).join('')}
+                    </ul>
+                </div>
+            `;
         }
 
-        const items = texto.split(',').map(t => t.trim()).filter(t => t);
-        return `
-            <div class="celda-scroll">
-                <ul class="lista-viñetas">
-                    ${items.map(item => `<li>${item}</li>`).join('')}
-                </ul>
-            </div>
-        `;
+        // Si no es una suma ni un array, trátalo como un texto simple
+        return `<div class="celda-scroll">${String(valor).trim()}</div>`;
     };
 
     tabla.innerHTML = `
@@ -551,7 +559,7 @@ const updateSubgenericaFilter = () => {
     } else {
         // If unique subgenericas change (e.g., new file loaded), filter out old selected ones
         window.selectedSubgenericasCA = window.selectedSubgenericasCA.filter(sg => uniqueCASubgenericas.includes(sg));
-        // If after filtering, no subgenericas are selected but there are new ones, select all new ones
+        // If after filtering, no subgenericas are selected but there are new ones, re-select all new ones
         if (window.selectedSubgenericasCA.length === 0 && uniqueCASubgenericas.length > 0) {
             window.selectedSubgenericasCA = [...uniqueCASubgenericas];
         }
