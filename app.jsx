@@ -337,7 +337,12 @@ function HelpModal({ open, onClose }) {
             <ol className="list-decimal list-inside space-y-1">
               <li>
                 Descarga el ejecutable{" "}
-                <a className="link" href="scraper.exe" download>scraper.exe</a>.
+                    <a
+                    className="link"
+                    href="https://drive.google.com/file/d/1TQ4rjplKPUsD44dBS91O467S10__zthp/view?usp=sharing"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >scraper.exe</a>
               </li>
               <li>Ejecuta el archivo y sigue las instrucciones para elegir entidad y periodo.</li>
               <li>El programa exporta archivos <strong>CSV con encabezados</strong> para CEPLAN y CA.</li>
@@ -347,7 +352,12 @@ function HelpModal({ open, onClose }) {
         </div>
 
         <div className="mt-4 flex items-center justify-end">
-          <a className="btn" href="scraper.exe" download>Descargar scraper.exe</a>
+            <a
+            className="btn"
+            href="https://drive.google.com/file/d/1TQ4rjplKPUsD44dBS91O467S10__zthp/view?usp=sharing"
+            target="_blank"
+            rel="noopener noreferrer"
+            >Descargar scraper.exe</a>
         </div>
       </div>
     </div>
