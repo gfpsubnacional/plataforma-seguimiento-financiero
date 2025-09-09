@@ -1,80 +1,21 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Seguimiento Financiero</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.1/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jschardet/3.0.0/jschardet.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-    <link rel="stylesheet" type="text/css" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Registro de POA ejecutado — Comparador CA / CEPLAN / SIGA</title>
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- React & ReactDOM -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- Utilitarios -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 </head>
-<body>
-    <header class="header">
-        <div class="logos">
-            <a href="https://www.gfpsubnacional.pe/inicio/"><img src="images/gfp_darkbg.png" alt="GFP Logo"></a>
-            <a href="https://cooperacionsuiza.pe/seco" target="_blank" rel="nofollow"><img src="images/suiza_darkbg.png" alt="Suiza Logo"></a>
-            <a href="https://baselgovernance.org" target="_blank" rel="nofollow"><img src="images/basel_darkbg.png" alt="Basel Logo"></a>
-            <h5>Seguimiento Financiero</h5>
-        </div>
-    </header>
-
-    <!-- <div id="resultados-container"></div> -->
-
-    <div class="main-container">
-        <div class="top-section">
-
-            <div class="upload-box">
-                <div class="upload-header">
-                    <h3>Información CEPLAN</h3>
-                    <button class="info-button" data-popup="contenido1.html">ℹ️</button>
-                </div>
-                <div class="upload-input">
-                    <input id="ceplan" type="file" accept=".csv, .txt">
-                </div>
-            </div>
-
-            <div class="upload-box">
-                <div class="upload-header">
-                    <h3>Información CA</h3>
-                    <button class="info-button" data-popup="contenido1.html">ℹ️</button>
-                </div>
-                <div class="upload-input">
-                    <input id="ca" type="file" accept=".csv, .txt">
-                </div>
-            </div>
-
-            <div class="upload-box">
-                <div class="upload-header">
-                    <h3>Información SIGA</h3>
-                    <button class="info-button" data-popup="contenido1.html">ℹ️</button>
-                </div>
-                <div class="upload-input">
-                    <input id="siga" type="file" accept=".csv, .txt">
-                </div>
-            </div>
-        </div>
-
-        <div class="bottom-section">
-            <button id="process-btn">Generar análisis</button>
-            <a id="download-link" style="display: none">Descargar resultado</a>
-        </div>
-    </div>
-
-    <button id="manual-button" data-popup="manual.html">¿Cómo usar el aplicativo?</button>
-
-    <div id="popup" class="popup hidden">
-        <div class="popup-content">
-            <span id="popup-close">&times;</span>
-            <iframe id="popup-iframe" src="" frameborder="0"></iframe>
-        </div>
-    </div>
-
-    <script type="module" src="script2.js"></script>
+<body class="bg-slate-50 text-slate-900">
+  <div id="root"></div>
+  <script src="app.js"></script>
 </body>
 </html>
