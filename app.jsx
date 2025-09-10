@@ -24,6 +24,78 @@ const { useState, useMemo, useEffect } = React;
 const normStr = (s) => (s ?? "").toString().trim();
 const isTruthySi = (s) => ["sí","si","true","1","x","✔"].includes(normStr(s).toLowerCase());
 
+// Paleta única para PieChart y BarsChart (misma en todos lados)
+const PALETTE = [
+  "#2563EB","#16A34A","#F59E0B","#EF4444","#8B5CF6",
+  "#06B6D4","#84CC16","#F97316","#DB2777","#0EA5E9",
+  "#22C55E","#EAB308","#DC2626","#A855F7","#10B981"
+];
+
+function PagedList({ items, batch = 15 }) {
+  const [shown, setShown] = React.useState(batch);
+  const visible = items.slice(0, shown);
+  const remaining = Math.max(0, items.length - shown);
+
+  return (
+    <div className="space-y-1">
+      <ul className="list-disc list-inside space-y-0.5 text-sm">
+        {visible.length ? visible.map((x,i)=>
+          <li key={i} className="break-words">{x}</li>
+        ) : <li className="text-slate-400">—</li>}
+      </ul>
+      {remaining > 0 && (
+        <button className="btn-alt mt-2"
+          onClick={()=> setShown(s => s + batch)}>
+          Ver más ({remaining})
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+const fmtMoney = (n) => "S/ " + new Intl.NumberFormat("es-PE", {
+  maximumFractionDigits: 0, minimumFractionDigits: 0
+}).format(n);
+
+const fmtPct0 = (p) => new Intl.NumberFormat("es-PE", {
+  style: "percent", maximumFractionDigits: 0, minimumFractionDigits: 0
+}).format(p);
+
+
+function collapseSmall(items, minPct = 0.06, otrosLabel = "Otros") {
+  const valid = (items || []).filter(d => Number.isFinite(d?.value) && d.value > 0);
+  const total = valid.reduce((a, b) => a + b.value, 0);
+  if (total <= 0) return [];
+
+  const big = [];
+  let otros = 0;
+  for (const d of valid) {
+    const pct = d.value / total;
+    if (pct < minPct) otros += d.value; else big.push({ label: d.label, value: d.value });
+  }
+
+  // Ordena grandes (desc) y empuja "Otros" al final si corresponde
+  big.sort((a,b) => b.value - a.value);
+  if (otros > 0) big.push({ label: otrosLabel, value: otros });
+
+  return big;
+}
+
+const OTHERS_LABEL = "Otros";
+const OTHERS_COLOR = "#9CA3AF"; // gris fijo
+
+function withPalette(items) {
+  let pi = 0;
+  return (items || []).map((d) => {
+    if (d?.color) return d; // <- respeta color preasignado (p.ej. según fuente en versus)
+    const color = PALETTE[pi % PALETTE.length];
+    pi++;
+    return { ...d, color };
+  });
+}
+
+
 function parseNumberLoose(v) {
   if (v == null || v === "") return 0;
   if (typeof v === "number") return v;
@@ -73,7 +145,7 @@ function formatRangeDate(values) {
   if (!dates.length) return "—";
   const min = new Date(Math.min(...dates));
   const max = new Date(Math.max(...dates));
-  const fmt = (d) => d.toISOString().slice(0,10);
+  const fmt = (d) => d.toISOString().slice(0,10); // yyyy-mm-dd
   return `${fmt(min)} → ${fmt(max)}`;
 }
 
@@ -94,7 +166,8 @@ async function loadCriterios() {
   const rows = XLSX.utils.sheet_to_json(sh, { defval: null });
   return rows.map(r => ({
     name: normStr(r["Nombre normalizado"]) || null,
-    tipo: normStr(r["Tipo"]) || null,
+    tipoVersus: normStr(r["Tipo para versus"]) || null,
+    tipoInd: normStr(r["Tipo para individuales"]) || null,
     filtro: isTruthySi(r["Permitir filtro"]),
     map: {
       CA: normStr(r["CA"]) || null,
@@ -175,13 +248,6 @@ function applyInclusions(rows, var2inclusions) {
    Componentes de la interfaz
    ========================= */
 
-// Colores por dataset para el gráfico
-const DS_COLORS = {
-  CA: "#36A2EB",
-  CEPLAN: "#FF6384",
-  SIGA: "#62c462",
-};
-
 // === Ticks "redondos" (1, 2, 5 × 10^k)
 function niceTicks(max, target = 5) {
   if (!Number.isFinite(max) || max <= 0) return [0, 1];
@@ -211,8 +277,12 @@ function niceTicks(max, target = 5) {
 
 // Gráfico de barras (SVG) por variable con color del dataset propietario.
 // Mantiene el ORDEN de aparición de las variables "Num suma" en la tabla (sin ordenar por valor).
-function BarsChart({ data, title }) {
-  if (!data?.length) {
+// Gráfico de barras (SVG) por variable con owner-color.
+// Añade: envoltura de etiquetas (tspan) y ancho máximo opcional.
+function BarsChart({ data, title, maxWidth = 350, collapsePct = 0.06 }) {
+  const base = (collapsePct == null) ? (data || []) : collapseSmall(data, collapsePct);
+  const prepared = withPalette(base);
+  if (!prepared.length) {
     return (
       <div className="space-y-3 text-slate-700">
         {title && <div className="font-medium">{title}</div>}
@@ -221,74 +291,466 @@ function BarsChart({ data, title }) {
     );
   }
 
-  const maxVal = Math.max(1, ...data.map(d => d.value));
-  const fmt = (n) => new Intl.NumberFormat("es-PE", { maximumFractionDigits: 2 }).format(n);
+  const maxVal = Math.max(1, ...prepared.map(d => d.value));
+  const fmtAxis = fmtMoney; // ticks con S/ y 0 decimales
 
   const marks = niceTicks(maxVal, 5);
   const yMax = marks[marks.length - 1] || maxVal;
 
-  // Márgenes dinámicos para etiquetas grandes
-  const widestTick = marks.map(fmt).reduce((a, b) => (a.length > b.length ? a : b), "");
+  // Márgenes y altura dinámicos: banda para labels bajo el eje
+  const widestTick = marks.map(fmtAxis).reduce((a, b) => (a.length > b.length ? a : b), "");
   const pad = {
     top: 36,
     right: 24,
-    bottom: 52,
+    bottom: 32, // ya no reservamos banda para etiquetas
     left: Math.max(56, 10 + widestTick.length * 8)
   };
 
-  const width  = Math.max(360, data.length * 90 + pad.left + pad.right);
-  const height = 300;
+  const width  = Math.min(maxWidth, Math.max(360, prepared.length * 90 + pad.left + pad.right));
+  const BASE_PLOT_H = 220; // altura del área de barras (sin labels)
+  const height = pad.top + BASE_PLOT_H + pad.bottom; // altura total ADAPTATIVA
   const innerW = width - pad.left - pad.right;
-  const innerH = height - pad.top - pad.bottom;
-  const xStep  = innerW / data.length;
-  const barW   = Math.min(60, xStep * 0.6);
+  const innerH = BASE_PLOT_H; // altura del área de barras fija
+  const xStep  = innerW / prepared.length;
+  const barW   = Math.min(52, xStep * 0.6);
 
   return (
     <div className="space-y-3 text-slate-700">
       {title && <div className="font-medium">{title}</div>}
-      <svg width="100%" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title || "Bar chart"}>
-        {/* Guías horizontales con valores "bonitos" */}
-        {marks.map((m, i) => {
-          const y = height - pad.bottom - (innerH * (m / yMax));
-          return (
-            <g key={"y"+i}>
-              <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="currentColor" strokeOpacity="0.08" />
-              <text x={pad.left - 6} y={y + 4} fontSize="11" textAnchor="end">{fmt(m)}</text>
-            </g>
-          );
-        })}
+      {/* CONTENEDOR CON LIMITE DE ANCHO */}
+      <div style={{ maxWidth: `${maxWidth}px`, width: "100%", margin: "0 auto" }}>
+        <svg
+          style={{ width: "100%", height: "auto", display: "block" }}
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={title || "Bar chart"}
+        >
+          {/* Guías horizontales */}
+          {marks.map((m, i) => {
+            const y = height - pad.bottom - (innerH * (m / yMax));
+            return (
+              <g key={"y"+i}>
+                <line x1={pad.left} x2={width - pad.right} y1={y} y2={y} stroke="currentColor" strokeOpacity="0.08" />
+                <text x={pad.left - 6} y={y + 4} fontSize="11" textAnchor="end">{fmtAxis(m)}</text>
+              </g>
+            );
+          })}
 
-        {/* Eje base */}
-        <line
-          x1={pad.left} x2={width - pad.right}
-          y1={height - pad.bottom} y2={height - pad.bottom}
-          stroke="currentColor" strokeOpacity="0.2"
-        />
+          {/* Eje base */}
+          <line
+            x1={pad.left} x2={width - pad.right}
+            y1={height - pad.bottom} y2={height - pad.bottom}
+            stroke="currentColor" strokeOpacity="0.2"
+          />
 
-        {data.map((d, i) => {
-          const x = pad.left + i * xStep + (xStep - barW) / 2;
-          const h = innerH * (d.value / yMax);
-          const y = height - pad.bottom - h;
-          const valueY = Math.max(y - 6, pad.top + 12); // evita corte superior
+          {prepared.map((d, i) => {
+            const x = pad.left + i * xStep + (xStep - barW) / 2;
+            const h = innerH * (d.value / yMax);
+            const y = height - pad.bottom - h;
+            const valueY = Math.max(y - 6, pad.top + 12);
 
-          return (
-            <g key={d.label}>
-              <rect x={x} y={y} width={barW} height={h} rx="8" fill={d.color || "currentColor"} opacity="0.85" />
-              <text x={x + barW / 2} y={valueY} textAnchor="middle" fontSize="12">{fmt(d.value)}</text>
-              <text x={x + barW / 2} y={height - pad.bottom + 18} textAnchor="middle" fontSize="12">{d.label}</text>
-            </g>
-          );
-        })}
-      </svg>
+            const baseline = height - pad.bottom + 18; // SIEMPRE debajo del eje
+
+            return (
+              <g key={d.label}>
+                <rect x={x} y={y} width={barW} height={h} rx="8" fill={d.color || "currentColor"} opacity="0.85" />
+                <text x={x + barW / 2} y={valueY} textAnchor="middle" fontSize="12">{fmtMoney(d.value)}</text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Leyenda de colores (igual que PieChart) */}
+        <div className="mt-3 space-y-1">
+          {prepared.map((d,i) => (
+            <div key={i} className="flex items-center gap-2 text-sm">
+              <span className="inline-block w-3 h-3 rounded-sm" style={{ background: d.color }} />
+              <span className="break-words">{d.label}</span>
+            </div>
+          ))}
+        </div>
+
+      </div>
     </div>
   );
 }
 
-function UploadCard({ label, accept, onFile }) {
-  const id = label.replace(/\s+/g, "_");
+// Gráfico de pie (SVG) simple
+// Gráfico de pie (SVG) con paleta de colores automática y ancho máximo controlado
+function PieChart({ data, title, size = 280, maxWidth = 350 }) {
+  // Filtrar datos válidos
+  const filtered  = (data || []).filter(d => Number.isFinite(d.value) && d.value > 0);
+  const collapsed = collapseSmall(filtered, 0.06);
+
+  // Forzar “Otros” con gris fijo y SIN consumir índice de la paleta
+  const enforced  = collapsed.map(d =>
+    d.label === OTHERS_LABEL ? { ...d, color: OTHERS_COLOR } : d
+  );
+
+  const colored   = withPalette(enforced);
+  const totalColored = colored.reduce((a, b) => a + b.value, 0);
+
+  if (!colored.length || totalColored <= 0) {
+    return (
+      <div className="space-y-3 text-slate-700">
+        {title && <div className="font-medium">{title}</div>}
+        <div className="text-sm text-slate-500">Sin datos para el gráfico.</div>
+      </div>
+    );
+  }
+
+  const cx = size / 2, cy = size / 2, r = size * 0.38;
+  let angleAcc = -Math.PI / 2;
+  const toXY = (ang) => [cx + r * Math.cos(ang), cy + r * Math.sin(ang)];
+
+  // Si hay un solo valor, dibuja un círculo completo con la etiqueta centrada
+  if (colored.length === 1) {
+    const d = colored[0];
+    const valTxt = fmtMoney(d.value);
+    const pctTxt = fmtPct0(1);
+
+    return (
+      <div className="space-y-3 text-slate-700">
+        {title && <div className="font-medium">{title}</div>}
+        <div style={{ maxWidth: `${maxWidth}px`, width: "100%", margin: "0 auto" }}>
+          <svg
+            style={{ width: "100%", height: "auto", display: "block" }}
+            viewBox={`0 0 ${size} ${size}`}
+            role="img"
+            aria-label={title || "Pie chart"}
+          >
+            <circle cx={cx} cy={cy} r={r} fill={d.color} opacity="0.9" />
+            {/* Etiqueta centrada (valor y 100%) con halo para legibilidad */}
+            <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+                  fontSize="12" stroke="rgba(0,0,0,0.35)" strokeWidth="2" paintOrder="stroke">
+              {`${valTxt} (${pctTxt})`}
+            </text>
+            <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
+                  fontSize="12" fill="#fff">
+              {`${valTxt} (${pctTxt})`}
+            </text> 
+          </svg>
+        </div>
+
+        {/* Leyenda SOLO con la etiqueta */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-3 h-3 rounded-sm" style={{ background: d.color }} />
+              <span className="break-words">{d.label || "(sin etiqueta)"}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Caso general (2+ valores): porciones + texto interno (valor y %) y LEYENDA SOLO con la etiqueta
   return (
-    <div className="card p-4 space-y-3">
-      <div className="text-sm text-slate-500">{label}</div>
+    <div className="space-y-3 text-slate-700">
+      {title && <div className="font-medium">{title}</div>}
+      <div style={{ maxWidth: `${maxWidth}px`, width: "100%", margin: "0 auto" }}>
+        <svg
+          style={{ width: "100%", height: "auto", display: "block" }}
+          viewBox={`0 0 ${size} ${size}`}
+          role="img"
+          aria-label={title || "Pie chart"}
+        >
+        {/* 1) DIBUJAR TODAS LAS PORCIONES */}
+        {(() => {
+          let aacc = -Math.PI / 2;
+          return colored.map((d, idx) => {
+            const ang = (d.value / totalColored) * Math.PI * 2;
+            const a0 = aacc;
+            const a1 = aacc + ang;
+            aacc = a1;
+
+            const [x0, y0] = toXY(a0);
+            const [x1, y1] = toXY(a1);
+            const largeArc = ang > Math.PI ? 1 : 0;
+
+            const path = [
+              `M ${cx} ${cy}`,
+              `L ${x0} ${y0}`,
+              `A ${r} ${r} 0 ${largeArc} 1 ${x1} ${y1}`,
+              "Z"
+            ].join(" ");
+
+            return <path key={"slice-"+idx} d={path} fill={d.color} opacity="0.9" />;
+          });
+        })()}
+
+        {/* 2) LUEGO TODAS LAS ETIQUETAS (ENCIMA) */}
+        {(() => {
+          let aacc = -Math.PI / 2;
+          return colored.map((d, idx) => {
+            const ang = (d.value / totalColored) * Math.PI * 2;
+            const a0 = aacc;
+            const a1 = aacc + ang;
+            aacc = a1;
+
+            const mid = (a0 + a1) / 2;
+            const rLabel = r * 0.62; // misma posición interna
+            const lx = cx + rLabel * Math.cos(mid);
+            const ly = cy + rLabel * Math.sin(mid);
+            const pct = totalColored > 0 ? (d.value / totalColored) : 0;
+            const valTxt = fmtMoney(d.value);
+            const pctTxt = fmtPct0(pct);
+
+            return (
+              <g key={"label-"+idx}>
+                <text
+                  x={lx}
+                  y={ly}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize="11"
+                  stroke="rgba(0,0,0,0.35)"
+                  strokeWidth="2"
+                  paintOrder="stroke"
+                >
+                  {`${valTxt} (${pctTxt})`}
+                </text>
+                <text
+                  x={lx}
+                  y={ly}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize="11"
+                  fill="#fff"
+                >
+                  {`${valTxt} (${pctTxt})`}
+                </text>
+              </g>
+            );
+          });
+        })()}
+        </svg>
+      </div>
+
+      {/* Leyenda SOLO con la etiqueta */}
+      <div className="space-y-1">
+        {colored.map((d, i) => (
+          <div key={i} className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-3 h-3 rounded-sm" style={{ background: d.color }} />
+              <span className="break-words">{d.label || "(sin etiqueta)"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// === Helpers para el dashboard CA ===
+function groupSum(rows, key, valueName) {
+  const acc = new Map();
+  for (const r of rows) {
+    const k = normStr(r[key]) || "(vacío)";
+    const raw = (valueName ? r[valueName] : undefined);
+    const v = parseNumberLoose(raw);
+    acc.set(k, (acc.get(k) || 0) + (Number.isFinite(v) ? v : 0));
+  }
+  return [...acc.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .filter(d => Number.isFinite(d.value) && d.value > 0)
+    .sort((a,b)=> b.value - a.value);
+}
+const topN = (arr, n=10) => arr.slice(0, n);
+
+// Buscar variable por nombre aproximado (sin tilde)
+function findVarByIncludes(criterios, needles=[]) {
+  const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+  for (const c of (criterios||[])) {
+    const n = norm(c.name||"");
+    if (needles.some(nd => n.includes(nd))) return c.name;
+  }
+  return null;
+}
+
+// === Dashboard para CA ===
+// === Dashboard para CA ===
+function DashboardDataset({ dsName, rows, criterios }) {
+  // ---- Clasificaciones segun "Tipo para individuales" ----
+  const tipoInd = (criterios || []).filter(c => c.tipoInd);
+
+  // Solo usar variables que EXISTEN para el dataset activo
+  const hasVar = (c) => !!c.map?.[dsName];
+
+  const resumenInd  = tipoInd.filter(c =>
+    c.tipoInd.toLowerCase().includes("resumen") && hasVar(c)
+  );
+  const listasInd   = tipoInd.filter(c =>
+    c.tipoInd === "Lista" && hasVar(c)
+  );
+  const graficables = tipoInd.filter(c =>
+    /gr(a|á)fico/.test(c.tipoInd.toLowerCase()) && hasVar(c)
+  );
+
+  // MÉTRICAS desde criterios.xlsx (solo mapeadas y con total > 0)
+  const metricDefsAll = tipoInd.filter(c =>
+    c.tipoInd.toLowerCase() === "filtro metrica" && hasVar(c)
+  );
+  const metricDefs = metricDefsAll.filter(c => {
+    const total = rows.reduce((a, r) => a + parseNumberLoose(r[c.name]), 0);
+    return total > 0;
+  });
+  const metricOptions = metricDefs.map(c => c.name);
+
+  // Estado de la métrica (después de tener metricOptions)
+  const [metric, setMetric] = useState(metricOptions[0] || null);
+
+  useEffect(() => {
+    if (!metricOptions.includes(metric)) {
+      setMetric(metricOptions[0] || null);
+    }
+  }, [dsName, criterios, metricOptions, metric]);
+
+  // Variables de totales (pueden venir de tipoVersus o tipoInd como "Num suma")
+  const isNumSuma = (c) => c.tipoVersus === "Num suma" || c.tipoInd === "Num suma";
+
+  // Totales básicos (PIA/PIM/DEV/Girado)
+  const totalDe = (k) => rows.reduce((a,r)=> a + parseNumberLoose(r[k]), 0);
+  const tot = {
+    PIA: totalDe("PIA"),
+    PIM: totalDe("PIM"),
+    DEV: totalDe("DEV"),
+    Girado: totalDe("Girado")
+  };
+  const metricKey = metric || null; // null si no hay métricas definidas
+
+  // ---------- RESUMEN ----------
+  const formatResumenCelda = (c) => {
+    const vals = rows.map(r => r[c.name]);
+    const low = c.tipoInd.toLowerCase();
+    if (low.includes("(rango)")) {
+      return formatRangeDate(vals);
+    }
+    // por defecto: valores únicos
+    return uniqueSorted(vals).join(" · ") || "—";
+  };
+
+  // ---------- LISTAS ----------
+  const listasValores = (c) => uniqueSorted(rows.map(r => r[c.name]));
+
+  return (
+    <div className="space-y-4">
+      {/* Resumen (parametrizado) */}
+      {resumenInd.length > 0 && (
+        <div className="card p-4">
+          <div className="text-sm text-slate-600 mb-3">Resumen</div>
+          <div className="grid sm:grid-cols-2 gap-3 text-sm">
+            {resumenInd.map((c) => (
+              <div key={c.name}>
+                <span className="text-slate-500">{c.name}:</span>{" "}
+                <span className="font-medium">{formatResumenCelda(c)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Totales fijos */}
+      {metricOptions.length > 0 && (
+        <div className={`grid gap-4 ${metricOptions.length >= 4 ? "sm:grid-cols-4" : "sm:grid-cols-2"}`}>
+          {metricOptions.map(m => {
+            const total = rows.reduce((a,r)=> a + parseNumberLoose(r[m]), 0);
+            return (
+              <div key={m} className="card p-4">
+                <div className="text-xs text-slate-500">{m} total</div>
+                <div className="text-lg font-semibold">
+                  {fmtMoney(total)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Selector de métrica */}
+      {(graficables.length > 0 && metricOptions.length > 0) && (
+        <div className="card p-4">
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-600">Métrica:</span>
+            <select className="input" value={metric || ""} onChange={(e)=>setMetric(e.target.value)}>
+              {metricOptions.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {/* Gráficos para TODAS las variables graficables existentes */}
+      {graficables.map(g => {
+        if (!metric) return null; // sin métrica válida, no graficar
+        const metricKey = metric; // ya validado por metricOptions
+        const grouped = groupSum(rows, g.name, metricKey);
+
+        // si el total es 0, no tiene sentido graficar
+        const total = grouped.reduce((a, b) => a + (Number.isFinite(b.value) ? b.value : 0), 0);
+        if (!grouped.length || total <= 0) return null;
+
+        const barsData = grouped
+          .filter(d => Number.isFinite(d.value) && d.value > 0);
+
+        if (!barsData.length) return null;
+
+        return (
+          <div key={g.name} className="grid md:grid-cols-2 gap-4">
+            <div className="card p-4">
+              <BarsChart data={barsData} title={`Gráfico de ${g.name} por ${metricKey}`} />
+            </div>
+            <div className="card p-4">
+              <PieChart data={barsData} title={`Composición de ${g.name} por ${metricKey}`} />
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Listas (todas las que marque el Excel) */}
+      {listasInd.length > 0 && (
+        <div className="card p-4 space-y-4">
+          <div className="text-sm text-slate-600">Listas</div>
+          {listasInd.map((c) => {
+            const items = listasValores(c).filter(v => normStr(v) !== "");
+            return (
+              <div key={c.name}>
+                <div className="font-medium mb-1">{c.name}</div>
+                <PagedList items={items} batch={15} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UploadCard({ label, accept, onFile, ds }) {
+  const id = label.replace(/\s+/g, "_");
+  const borderColor = DS_COLOR[ds] || "#E5E7EB";
+  const bgSoft = DS_BG[ds] || "transparent";
+
+  return (
+    <div
+      className="card p-4 space-y-3"
+      style={{ borderColor, background: bgSoft }}
+    >
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-slate-700 font-medium">{label}</div>
+        {ds && (
+          <span
+            className="px-2 py-0.5 rounded-full text-xs font-semibold"
+            style={{ background: DS_COLOR[ds], color: "#fff" }}
+          >
+            {ds}
+          </span>
+        )}
+      </div>
+
       <input
         id={id}
         type="file"
@@ -296,7 +758,8 @@ function UploadCard({ label, accept, onFile }) {
         onChange={(e) => onFile(e.target.files?.[0] || null)}
         className="input"
       />
-      <div className="text-xs text-slate-500">
+
+      <div className="text-xs text-slate-600">
         {label.includes("SIGA") ? "TXT separado por TAB" : "CSV con encabezados"}
       </div>
     </div>
@@ -366,38 +829,39 @@ function HelpModal({ open, onClose }) {
 
 function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, onApply }) {
   const dsList = ["CA","CEPLAN","SIGA"].filter(ds => (perDatasetValues?.[ds]?.length || 0) > 0);
-  const [local, setLocal] = useState(() => {
+
+  // Al abrir: si no hay selección previa -> marcar TODOS por defecto
+  const buildInitial = () => {
     const o = {};
     for (const ds of dsList) {
       const cur = currentIncl?.[ds] || new Set();
-      o[ds] = new Set(cur);
+      const allVals = (perDatasetValues?.[ds] || []).map(normStr);
+      o[ds] = (cur.size === 0) ? new Set(allVals) : new Set([...cur].map(normStr));
     }
     return o;
-  });
+  };
+
+  const [local, setLocal] = useState(buildInitial);
 
   useEffect(() => {
-    if (open) {
-      const o = {};
-      for (const ds of dsList) {
-        const cur = currentIncl?.[ds] || new Set();
-        o[ds] = new Set(cur);
-      }
-      setLocal(o);
-    }
-  }, [open]);
+    if (open) setLocal(buildInitial());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, varName, perDatasetValues, currentIncl]);
 
   if (!open) return null;
 
   const toggle = (ds, v) => {
-    const s = new Set(local[ds] || []);
-       const key = normStr(v);
-    if (s.has(key)) s.delete(key); else s.add(key);
-    setLocal(prev => ({ ...prev, [ds]: s }));
+    const key = normStr(v);
+    setLocal(prev => {
+      const copy = new Set(prev[ds] || []);
+      if (copy.has(key)) copy.delete(key); else copy.add(key);
+      return { ...prev, [ds]: copy };
+    });
   };
 
   const bulk = (ds, type) => {
-    const vals = perDatasetValues?.[ds] || [];
-    const next = new Set(type === "all" ? vals.map(normStr) : []); // all = incluir todos
+    const vals = (perDatasetValues?.[ds] || []).map(normStr);
+    const next = (type === "all") ? new Set(vals) : new Set(); // "none" vacía => luego no filtra si decides no aplicar
     setLocal(prev => ({ ...prev, [ds]: next }));
   };
 
@@ -424,16 +888,20 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
                 </div>
               </div>
               <div className="space-y-1 max-h-80 overflow-auto pr-1">
-                {(perDatasetValues?.[ds]||[]).map(v => (
-                  <label key={ds+"|"+normStr(v)} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={local[ds]?.has(normStr(v)) || false}
-                      onChange={()=>toggle(ds, v)}
-                    />
-                    <span className="break-words">{normStr(v) || <i>(vacío)</i>}</span>
-                  </label>
-                ))}
+                {(perDatasetValues?.[ds]||[]).map(v => {
+                  const key = normStr(v);
+                  const checked = local[ds]?.has(key) ?? true; // por defecto marcado
+                  return (
+                    <label key={ds+"|"+key} className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={()=>toggle(ds, v)}
+                      />
+                      <span className="break-words">{key || <i>(vacío)</i>}</span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           ))}
@@ -448,42 +916,81 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
   );
 }
 
+
 /* ==========================
    Vista de comparaciones
    ========================== */
-const dsClass = (ds) => ds === "CA" ? "col-ca" : ds === "CEPLAN" ? "col-ce" : "col-si";
+// Colores por dataset SOLO en app.js (sólido y sombreado translúcido)
+const DS = {
+  CA:     { solid: "#36A2EB", bg: "rgba(54,162,235,.12)" },
+  CEPLAN: { solid: "#FF6384", bg: "rgba(255,99,132,.12)" },
+  SIGA:   { solid: "#62c462", bg: "rgba(98,196,98,.12)" },
+};
+
+// Derivados para usar donde ya referenciabas DS_COLOR / DS_BG
+const DS_COLOR = {
+  CA: DS.CA.solid,
+  CEPLAN: DS.CEPLAN.solid,
+  SIGA: DS.SIGA.solid,
+};
+const DS_BG = {
+  CA: DS.CA.bg,
+  CEPLAN: DS.CEPLAN.bg,
+  SIGA: DS.SIGA.bg,
+};
+
+// Sombreado de celdas (versus) con transparencia
+const dsStyle = (ds) => ({ background: DS[ds]?.bg || "transparent" });
+
+// Estilo de tab por dataset (inactivo = bg suave, activo = color sólido)
+const dsTabStyle = (ds, active) => ({
+  background: active ? DS[ds].solid : DS[ds].bg,
+  color: active ? "#fff" : "#0f172a",
+});
+
+
 
 function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
-  const resumenCriterios = criterios.filter(c => c.tipo?.toLowerCase().includes("para resumen"));
-  const listas = criterios.filter(c => c.tipo === "Lista");
-  const nums = criterios.filter(c => c.tipo === "Num suma");
+  const resumenCriterios = criterios.filter(c =>
+    c.tipoVersus?.toLowerCase().includes("para resumen") &&
+    (c.map?.[leftName] || c.map?.[rightName])
+  );
+  const listas = criterios.filter(c =>
+    c.tipoVersus === "Lista" &&
+    (c.map?.[leftName] || c.map?.[rightName])
+  );
+  const nums = criterios.filter(c =>
+    c.tipoVersus === "Num suma" &&
+    (c.map?.[leftName] || c.map?.[rightName])
+  );
 
   const countLeft = leftRows.length;
   const countRight = rightRows.length;
 
   // === Grilla de barras: una barra por variable "Num suma", en EL MISMO ORDEN que aparece en la tabla (sin ordenar por valor).
-  // Color según dataset propietario por mapeo de criterios (no según valor). Altura y etiqueta = suma del propietario.
-  const barsData = nums.map(c => {
-    const leftHas = !!c.map?.[leftName];
-    const rightHas = !!c.map?.[rightName];
-    const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberLoose(r[c.name]), 0);
-    const sumRight = rightRows.reduce((acc, r) => acc + parseNumberLoose(r[c.name]), 0);
+  const barsData = nums
+    .map(c => {
+      const leftHas = !!c.map?.[leftName];
+      const rightHas = !!c.map?.[rightName];
+      const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberLoose(r[c.name]), 0);
+      const sumRight = rightRows.reduce((acc, r) => acc + parseNumberLoose(r[c.name]), 0);
 
-    let owner = leftName;
-    if (leftHas && !rightHas) owner = leftName;
-    else if (!leftHas && rightHas) owner = rightName;
-    else if (leftHas && rightHas) owner = leftName;
-    else owner = leftName;
+      let owner = leftName;
+      if (leftHas && !rightHas) owner = leftName;
+      else if (!leftHas && rightHas) owner = rightName;
+      else if (leftHas && rightHas) owner = leftName;
 
-    const value = owner === leftName ? sumLeft : sumRight;
-
-    return { label: c.name, value, color: DS_COLORS[owner] || "#888888" };
-  }).filter(d => d.value > 0); // solo mayores a 0
+      const value = owner === leftName ? sumLeft : sumRight;
+      const color = DS[owner]?.solid || "#6B7280";
+      return { label: c.name, value, color };
+    })
+    .filter(d => d.value > 0);
 
   const renderResumenItem = (c) => {
     const title = c.name;
-    const isRango = c.tipo.toLowerCase().includes("(rango)");
-    const isUnicos = c.tipo.toLowerCase().includes("(valores únicos)");
+    const t = (c.tipoVersus || "").toLowerCase();
+    const isRango = t.includes("(rango)");
+    const isUnicos = t.includes("(valores únicos)");
     const lv = leftRows.map(r => r[title]);
     const rv = rightRows.map(r => r[title]);
 
@@ -499,10 +1006,10 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
     return (
       <tr key={title} className="border-t">
         <td className="py-2 pr-2">{title}</td>
-        <td className={`py-2 px-3 ${dsClass(leftName)}`}>
+        <td className="py-2 px-3" style={dsStyle(leftName)}>
           <div style={{maxHeight:'260px', overflowY:'auto', wordBreak:'break-word', whiteSpace:'pre-wrap'}}>{leftVal}</div>
         </td>
-        <td className={`py-2 px-3 ${dsClass(rightName)}`}>
+        <td className="py-2 px-3" style={dsStyle(rightName)}>
           <div style={{maxHeight:'260px', overflowY:'auto', wordBreak:'break-word', whiteSpace:'pre-wrap'}}>{rightVal}</div>
         </td>
       </tr>
@@ -516,19 +1023,11 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
     return (
       <tr key={"lista-"+title} className="align-top border-t">
         <td className="py-2 pr-2 font-medium">{title}</td>
-        <td className={`py-2 px-3 ${dsClass(leftName)}`}>
-          <div style={{maxHeight:'260px', overflowY:'auto'}}>
-            <ul className="list-disc list-inside space-y-0.5">
-              {L.length ? L.map((x,i) => <li key={"L"+title+i} className="break-words">{normStr(x)}</li>) : <li className="text-slate-400">—</li>}
-            </ul>
-          </div>
+        <td className="py-2 px-3" style={dsStyle(leftName)}>
+          <PagedList items={L.map(normStr)} batch={3} />
         </td>
-        <td className={`py-2 px-3 ${dsClass(rightName)}`}>
-          <div style={{maxHeight:'260px', overflowY:'auto'}}>
-            <ul className="list-disc list-inside space-y-0.5">
-              {R.length ? R.map((x,i) => <li key={"R"+title+i} className="break-words">{normStr(x)}</li>) : <li className="text-slate-400">—</li>}
-            </ul>
-          </div>
+        <td className="py-2 px-3" style={dsStyle(rightName)}>
+          <PagedList items={R.map(normStr)} batch={3} />
         </td>
       </tr>
     );
@@ -538,12 +1037,11 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
     const title = c.name;
     const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberLoose(r[title]), 0);
     const sumRight = rightRows.reduce((acc, r) => acc + parseNumberLoose(r[title]), 0);
-    const fmt = (n) => new Intl.NumberFormat("es-PE", { maximumFractionDigits: 2 }).format(n);
     return (
       <tr key={"num-"+title} className="border-t">
         <td className="py-2 pr-2 font-medium">{title}</td>
-        <td className={`py-2 px-3 ${dsClass(leftName)}`}>{fmt(sumLeft)}</td>
-        <td className={`py-2 px-3 ${dsClass(rightName)}`}>{fmt(sumRight)}</td>
+        <td className="py-2 px-3" style={dsStyle(leftName)}>{fmtMoney(sumLeft)}</td>
+        <td className="py-2 px-3" style={dsStyle(rightName)}>{fmtMoney(sumRight)}</td>
       </tr>
     );
   };
@@ -568,8 +1066,8 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
               <thead>
                 <tr>
                   <th className="py-2 pr-2">Variable (resumen)</th>
-                  <th className={`py-2 px-3 ${dsClass(leftName)}`}>{leftName}</th>
-                  <th className={`py-2 px-3 ${dsClass(rightName)}`}>{rightName}</th>
+                  <th className="py-2 px-3" style={dsStyle(leftName)}>{leftName}</th>
+                  <th className="py-2 px-3" style={dsStyle(rightName)}>{rightName}</th>
                 </tr>
               </thead>
               <tbody>
@@ -590,8 +1088,8 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
               <thead>
                 <tr>
                   <th className="py-2 pr-2">Variable</th>
-                  <th className={`py-2 px-3 ${dsClass(leftName)}`}>{leftName}</th>
-                  <th className={`py-2 px-3 ${dsClass(rightName)}`}>{rightName}</th>
+                  <th className="py-2 px-3" style={dsStyle(leftName)}>{leftName}</th>
+                  <th className="py-2 px-3" style={dsStyle(rightName)}>{rightName}</th>
                 </tr>
               </thead>
               <tbody>
@@ -605,8 +1103,7 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
 
       <div className="card p-4">
         <BarsChart
-          data={barsData}
-          title="Suma por variable (solo &gt; 0) — orden de la tabla"
+          data={barsData} collapsePct={null}
         />
       </div>
     </div>
@@ -627,6 +1124,7 @@ function App() {
 
   // Routing simple por hash (#inicio | #resultados)
   const [route, setRoute] = useState("inicio");
+  const [activeTab, setActiveTab] = useState("CA");
   const [filterVar, setFilterVar] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -636,9 +1134,6 @@ function App() {
     sync();
     return () => window.removeEventListener("hashchange", sync);
   }, []);
-
-  // Métricas rápidas
-  const [stats, setStats] = useState({ CA:null, CEPLAN:null, SIGA:null });
 
   useEffect(() => {
     loadCriterios().then(setCriterios).catch(e => {
@@ -657,7 +1152,6 @@ function App() {
     if (!file) {
       setRaw(prev => ({ ...prev, [ds]: [] }));
       setNorm(prev => ({ ...prev, [ds]: [] }));
-      setStats(prev => ({ ...prev, [ds]: null }));
       return;
     }
     try {
@@ -667,7 +1161,6 @@ function App() {
       if (criterios) {
         const normalized = normalizeDataset(data, ds, criterios);
         setNorm(prev => ({ ...prev, [ds]: normalized }));
-        setStats(prev => ({ ...prev, [ds]: computeStats(ds, normalized, criterios) }));
       }
     } catch (e) {
       console.error(e);
@@ -678,22 +1171,20 @@ function App() {
   useEffect(() => {
     if (!criterios) return;
     const nextNorm = { ...norm };
-    const nextStats = { ...stats };
     for (const ds of ["CA","CEPLAN","SIGA"]) {
       const data = raw[ds];
-      if (!data?.length) { nextNorm[ds]=[]; nextStats[ds]=null; continue; }
-      const normalized = normalizeDataset(data, ds, criterios);
-      nextNorm[ds] = normalized;
-      nextStats[ds] = computeStats(ds, normalized, criterios);
+      if (!data?.length) { nextNorm[ds]=[]; continue; }
+      nextNorm[ds] = normalizeDataset(data, ds, criterios);
     }
     setNorm(nextNorm);
-    setStats(nextStats);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [criterios]);
 
   function computeStats(dsKey, rows, criterios) {
     if (!rows?.length) return { rows:0, nums:[] };
-    const numCrits = (criterios || []).filter(c => c.tipo === "Num suma");
+    const numCrits = (criterios || []).filter(c =>
+      (c.tipoVersus === "Num suma" || c.tipoInd === "Num suma") && c.map?.[dsKey]
+    );
     const nums = numCrits.map(c => {
       const arr = rows.map(r => r[c.name]);
       const valid = arr.map(parseNumberLoose).filter(n => Number.isFinite(n));
@@ -734,13 +1225,23 @@ function App() {
     };
   }, [norm, inclusions]);
 
+  const stats = useMemo(() => {
+    const make = (ds) => computeStats(ds, filtered[ds], criterios || []);
+    return {
+      CA: make("CA"),
+      CEPLAN: make("CEPLAN"),
+      SIGA: make("SIGA"),
+    };
+  }, [filtered, criterios]);
+
+
   const ready = !!criterios && (norm.CA.length || norm.CEPLAN.length || norm.SIGA.length);
   const canCompare = filtered.CA.length || filtered.CEPLAN.length || filtered.SIGA.length;
 
-  const [activeTab, setActiveTab] = useState("CA_CEPLAN");
   const activeLeftRight = useMemo(() => {
+    if (["CA","CEPLAN","SIGA"].includes(activeTab)) return null; // individuales
     if (activeTab === "CA_CEPLAN") return ["CA","CEPLAN"];
-    if (activeTab === "CA_SIGA") return ["CA","SIGA"];
+    if (activeTab === "CA_SIGA")   return ["CA","SIGA"];
     return ["CEPLAN","SIGA"];
   }, [activeTab]);
 
@@ -769,75 +1270,113 @@ function App() {
       {route === "inicio" && (
         <>
           <section className="grid md:grid-cols-3 gap-4">
-            <UploadCard label="Archivo CA (CSV)" accept=".csv,text/csv" onFile={(f)=>handleSelect('CA',f)} />
-            <UploadCard label="Archivo CEPLAN (CSV)" accept=".csv,text/csv" onFile={(f)=>handleSelect('CEPLAN',f)} />
-            <UploadCard label="Archivo SIGA (TXT con tabs)" accept=".txt,text/plain" onFile={(f)=>handleSelect('SIGA',f)} />
+            <UploadCard ds="CA" label="Archivo CA" accept=".csv,text/csv" onFile={(f)=>handleSelect('CA',f)} />
+            <UploadCard ds="CEPLAN" label="Archivo CEPLAN" accept=".csv,text/csv" onFile={(f)=>handleSelect('CEPLAN',f)} />
+            <UploadCard ds="SIGA" label="Archivo SIGA" accept=".txt,text/plain" onFile={(f)=>handleSelect('SIGA',f)} />
           </section>
 
-          {/* Métricas rápidas */}
-          <div className="card p-4">
-            <div className="text-sm text-slate-600 mb-3">Resumen rápido</div>
-            <div className="grid sm:grid-cols-3 gap-4">
-              {["CA","CEPLAN","SIGA"].map(ds => (
-                <div key={ds} className="border rounded-xl p-3">
-                  <div className="font-medium mb-1">{ds}</div>
-                  {!stats[ds] ? (
-                    <div className="text-xs text-slate-400">Sin datos</div>
-                  ) : (
-                    <>
-                      <div className="text-sm mb-2">Filas: <span className="font-semibold">{stats[ds].rows}</span></div>
-                      <div className="space-y-1">
-                        {stats[ds].nums.map(n => (
-                          <div key={ds+"|"+n.name} className="text-xs">
-                            <div className="font-medium">{n.name}</div>
-                            <div>Suma: {new Intl.NumberFormat("es-PE",{maximumFractionDigits:2}).format(n.sum)}</div>
-                            <div>Promedio: {new Intl.NumberFormat("es-PE",{maximumFractionDigits:2}).format(n.avg)}</div>
-                          </div>
-                        ))}
-                        {!stats[ds].nums.length && <div className="text-xs text-slate-400">Sin variables numéricas</div>}
-                      </div>
-                    </>
-                  )}
+{/* Filtros dinámicos (con icono y "Limpiar filtros" en la misma línea) */}
+<div className="card p-4">
+  <div className="flex items-center justify-between mb-3">
+    <div className="flex items-center gap-2 text-sm text-slate-600">
+      {/* Icono de filtro */}
+      <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 .8 1.6l-6.4 8.53V19a1 1 0 0 1-.553.894l-3 1.5A1 1 0 0 1 9 20.5v-5.37L2.2 5.6A1 1 0 0 1 3 5z"/>
+      </svg>
+      <span>Filtros (inclusión)</span>
+    </div>
+    <button
+      className="btn-alt"
+      onClick={() => { setInclusions({}); alert("Filtros limpiados."); }}
+    >
+      Limpiar filtros
+    </button>
+  </div>
+
+  <div className="flex flex-wrap gap-2">
+    {(criterios || []).filter(c => c.filtro && (c.map?.CA || c.map?.CEPLAN || c.map?.SIGA)).map(f => (
+      <button
+        key={f.name}
+        className="btn"
+        disabled={!ready}
+        onClick={() => setFilterVar(f.name)}
+        title="Incluir valores por dataset"
+      >
+        {/* pequeño icono en el botón */}
+        <span className="inline-flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M3 5a1 1 0 0 1 1-1h16a1 1 0 0 1 .8 1.6l-6.4 8.53V19a1 1 0 0 1-.553.894l-3 1.5A1 1 0 0 1 9 20.5v-5.37L2.2 5.6A1 1 0 0 1 3 5z"/>
+          </svg>
+          Filtrar por {f.name}
+        </span>
+      </button>
+    ))}
+    {!(criterios || []).some(c => c.filtro) && (
+      <div className="text-sm text-slate-400">No hay filtros definidos.</div>
+    )}
+  </div>
+</div>
+
+{/* Acción principal: Procesar comparación (centrado) */}
+<div className="flex items-center justify-center">
+  <button
+    className="btn btn-navy"
+    disabled={!ready || !canCompare}
+    onClick={() => { location.hash = "resultados"; }}
+  >
+    Procesar comparación
+  </button>
+</div>
+
+{/* Estadísticos descriptivos (antes estaba arriba como "Resumen rápido") */}
+<div className="card p-4">
+  <div className="text-sm text-slate-600 mb-3">Estadísticos descriptivos</div>
+  <div className="grid sm:grid-cols-3 gap-4">
+  {["CA","CEPLAN","SIGA"].map(ds => {
+    const borderColor = DS_COLOR[ds];
+    const bgSoft = DS_BG[ds];
+    return (
+      <div
+        key={ds}
+        className="border rounded-xl p-3"
+        style={{ borderColor, background: bgSoft }}
+      >
+        <div className="flex items-center justify-between mb-1">
+          <div className="font-medium">{ds}</div>
+          <span
+            className="px-2 py-0.5 rounded-full text-xs font-semibold"
+            style={{ background: DS_COLOR[ds], color: "#fff" }}
+          >
+            Resumen
+          </span>
+        </div>
+
+        {!stats[ds] ? (
+          <div className="text-xs text-slate-600">Sin datos</div>
+        ) : (
+          <>
+            <div className="text-sm mb-2">
+              Filas: <span className="font-semibold">{stats[ds].rows}</span>
+            </div>
+            <div className="space-y-1">
+              {stats[ds].nums.map(n => (
+                <div key={ds+"|"+n.name} className="text-xs">
+                  <div className="font-medium">{n.name}</div>
+                  <div>Suma: {fmtMoney(n.sum)}</div>
+                  <div>Promedio: {fmtMoney(n.avg)}</div>
                 </div>
               ))}
+              {!stats[ds].nums.length && (
+                <div className="text-xs text-slate-600">Sin variables numéricas</div>
+              )}
             </div>
-          </div>
-
-          {/* Filtros dinámicos */}
-          <div className="card p-4">
-            <div className="mb-2 text-sm text-slate-600">Filtros disponibles (inclusión):</div>
-            <div className="flex flex-wrap gap-2">
-              {(criterios || []).filter(c=>c.filtro).map(f => (
-                <button
-                  key={f.name}
-                  className="btn"
-                  disabled={!ready}
-                  onClick={() => setFilterVar(f.name)}
-                  title="Incluir valores por dataset"
-                >
-                  Filtrar por {f.name}
-                </button>
-              ))}
-              {!(criterios || []).some(c=>c.filtro) && <div className="text-sm text-slate-400">No hay filtros definidos.</div>}
-            </div>
-          </div>
-
-          {/* Acción de comparar */}
-          <div className="flex items-center gap-2">
-            <button
-              className="btn"
-              disabled={!ready || !canCompare}
-              onClick={() => { location.hash = "resultados"; }}
-            >
-              Procesar comparación
-            </button>
-            <button
-              className="btn-alt"
-              onClick={() => { setInclusions({}); alert("Filtros limpiados."); }}
-            >
-              Limpiar filtros
-            </button>
-          </div>
+          </>
+        )}
+      </div>
+    );
+  })}
+  </div>
+</div>
         </>
       )}
 
@@ -846,6 +1385,17 @@ function App() {
         <section className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex gap-2">
+              {["CA","CEPLAN","SIGA"].map(ds => (
+                <button
+                  key={ds}
+                  className="tab"
+                  style={dsTabStyle(ds, activeTab === ds)}
+                  onClick={()=>setActiveTab(ds)}
+                >
+                  {ds}
+                </button>
+              ))}
+
               <button className={`tab ${activeTab==="CA_CEPLAN" ? "tab-active" : ""}`} onClick={()=>setActiveTab("CA_CEPLAN")}>CA vs CEPLAN</button>
               <button className={`tab ${activeTab==="CA_SIGA" ? "tab-active" : ""}`} onClick={()=>setActiveTab("CA_SIGA")}>CA vs SIGA</button>
               <button className={`tab ${activeTab==="CEPLAN_SIGA" ? "tab-active" : ""}`} onClick={()=>setActiveTab("CEPLAN_SIGA")}>CEPLAN vs SIGA</button>
@@ -856,13 +1406,21 @@ function App() {
             </div>
           </div>
 
-          <VersusTable
-            leftName={activeLeftRight[0]}
-            rightName={activeLeftRight[1]}
-            leftRows={filtered[activeLeftRight[0]]}
-            rightRows={filtered[activeLeftRight[1]]}
-            criterios={(criterios || []).filter(c => c.tipo)}
-          />
+          {["CA","CEPLAN","SIGA"].includes(activeTab) ? (
+            <DashboardDataset
+              dsName={activeTab}
+              rows={filtered[activeTab]}
+              criterios={criterios || []}
+            />
+          ) : (
+            <VersusTable
+              leftName={activeLeftRight[0]}
+              rightName={activeLeftRight[1]}
+              leftRows={filtered[activeLeftRight[0]]}
+              rightRows={filtered[activeLeftRight[1]]}
+              criterios={criterios || []}
+            />
+          )}
         </section>
       )}
 
