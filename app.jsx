@@ -18,6 +18,13 @@
 /* global Papa, XLSX */
 const { useState, useMemo, useEffect } = React;
 
+// === Formato EN MILLONES (1 decimal) SOLO PARA GRÁFICOS ===
+const toM   = (n) => (Number(n) || 0) / 1_000_000;
+const fmtM1 = (n) => toM(n).toLocaleString('en-US', {
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+});
+
 /* ==========================
    Helpers de limpieza/parsing
    ========================== */
@@ -30,6 +37,24 @@ const PALETTE = [
   "#06B6D4","#84CC16","#F97316","#DB2777","#0EA5E9",
   "#22C55E","#EAB308","#DC2626","#A855F7","#10B981"
 ];
+
+// ===== CONFIG: activar/desactivar el filtro automático de Subproducto =====
+const AUTO_FILTER_SUBPRODUCTO = true;
+
+// Limpieza específica para "Subproducto (AAO)" según dataset
+function cleanSubproducto(ds, val) {
+  const s = normStr(val);
+  if (!s) return "";
+
+  // CA y CEPLAN: recortar después de ": " si existe
+  if (ds === "CA" || ds === "CEPLAN") {
+    const parts = s.split(": ");
+    return normStr(parts.length > 1 ? parts[1] : parts[0]);
+  }
+
+  // SIGA y cualquier otro dataset: devolver tal cual
+  return s;
+}
 
 function PagedList({ items, batch = 15 }) {
   const [shown, setShown] = React.useState(batch);
@@ -54,9 +79,13 @@ function PagedList({ items, batch = 15 }) {
 }
 
 
-const fmtMoney = (n) => "S/ " + new Intl.NumberFormat("es-PE", {
-  maximumFractionDigits: 0, minimumFractionDigits: 0
-}).format(n);
+const fmtMoney = (n) =>
+  "S/ " + new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+    useGrouping: true
+}).format(Number(n) || 0);
+
 
 const fmtPct0 = (p) => new Intl.NumberFormat("es-PE", {
   style: "percent", maximumFractionDigits: 0, minimumFractionDigits: 0
@@ -95,17 +124,36 @@ function withPalette(items) {
   });
 }
 
+// Escapa separadores para construir el RegExp de split
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
-function parseNumberLoose(v) {
+
+function parseNumberFixed(v) {
   if (v == null || v === "") return 0;
-  if (typeof v === "number") return v;
-  let s = normStr(v).replace(/\s/g, "");
-  const commas = (s.match(/,/g) || []).length;
-  const dots = (s.match(/\./g) || []).length;
-  if (commas && !dots) s = s.replace(/\./g, "").replace(",", ".");
-  else if (commas && dots && s.lastIndexOf(",") > s.lastIndexOf(".")) {
-    s = s.replace(/\./g, "").replace(",", ".");
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+
+  let s = normStr(v)
+    .replace(/\s+/g, "")                 // quita espacios
+    .replace(/S\/|\$|USD|PEN/gi, "");    // limpia símbolos moneda (opcional)
+
+  // negativos con paréntesis -> -n (opcional)
+  if (/^\(.*\)$/.test(s)) s = "-" + s.slice(1, -1);
+
+  // SIEMPRE: coma = separador de miles -> elimínalas
+  s = s.replace(/,/g, "");
+
+  // deja solo dígitos, punto y signo menos
+  s = s.replace(/[^0-9.-]/g, "");
+
+  // si hubiera varios puntos, conserva SOLO el último como decimal
+  const parts = s.split(".");
+  if (parts.length > 2) {
+    const last = parts.pop();
+    s = parts.join("") + "." + last;
   }
+
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
 }
@@ -179,19 +227,53 @@ async function loadCriterios() {
 
 /* ==============================
    Lectura de archivos de usuario
-   ============================== */
+   ============================== 
+*/
+
+// Decodifica un Blob intentando UTF-8 y haciendo fallback a Windows-1252 y Latin-1
+async function readBlobSmart(blob) {
+  const ab = await blob.arrayBuffer();
+
+  const decode = (label) => {
+    try { return new TextDecoder(label).decode(ab); }
+    catch { return null; }
+  };
+
+  // 1) Intento UTF-8
+  let text = decode("utf-8");
+  if (text != null && !/[ÃÂ�]/.test(text)) return text;
+
+  // 2) Fallback Windows-1252
+  const w = decode("windows-1252");
+  if (w != null && !/[ÃÂ�]/.test(w)) return w;
+
+  // 3) Último intento Latin-1
+  const l = decode("latin1");
+  if (l != null) return l;
+
+  // Si todo falla, retorna lo que haya de UTF-8
+  return text ?? "";
+}
+
+
 function parseCSVFile(file, opts = {}) {
-  return new Promise((resolve, reject) => {
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: "greedy",
-      delimiter: opts.delimiter || "",
-      transformHeader: (h) => normStr(h),
-      complete: (res) => resolve(res.data),
-      error: (err) => reject(err)
-    });
+  return new Promise(async (resolve, reject) => {
+    try {
+      const text = await readBlobSmart(file); // ← ahora autodetecta
+      Papa.parse(text, {
+        header: true,
+        skipEmptyLines: "greedy",
+        delimiter: opts.delimiter || "",
+        transformHeader: (h) => normStr(h),
+        complete: (res) => resolve(res.data),
+        error: (err) => reject(err)
+      });
+    } catch (e) {
+      reject(e);
+    }
   });
 }
+
 
 async function readUserFile(file) {
   if (!file) return [];
@@ -211,6 +293,10 @@ function normalizeDataset(rows, datasetKey, criterios) {
     if (src) invMap[src] = c.name;
   });
   const headers = Object.keys(rows[0] || {}).map(h => h.toLowerCase());
+  // Mapa auxiliar: header en minúsculas -> header original (para acceder al row con la clave real)
+  const headerMap = {};
+  Object.keys(rows[0] || {}).forEach(h => { headerMap[h.toLowerCase()] = h; });
+
   const ciIndex = {};
   Object.keys(invMap).forEach(orig => {
     const i = headers.indexOf(orig.toLowerCase());
@@ -224,6 +310,83 @@ function normalizeDataset(rows, datasetKey, criterios) {
       const mapped = invMap[k] || ciIndex[keyLow];
       if (mapped) out[mapped] = r[k];
     }
+
+    // ---- NUEVO: soportar expresiones tipo var(("sep1","sep2"), start, count) ----
+    // Ej.: clasificador((","," "),1,2)
+    criterios.forEach(c => {
+      const spec = c.map?.[datasetKey];
+      if (!spec) return;
+
+      // patrón: nombreCol ( ( "sep1","sep2",... ), start, count )
+      const rx = /^([a-zA-Z0-9_]+)\s*\(\s*\(\s*([^)]*?)\s*\)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/;
+      const m = spec.match(rx);
+      if (!m) return;
+
+      const colName = m[1].trim();
+      const sepsRaw = m[2];                // contenido entre los paréntesis dobles
+      const start   = parseInt(m[3], 10);  // 1-based
+      const count   = parseInt(m[4], 10);
+
+      // Normaliza lista de separadores: admite comillas simples o dobles
+      const seps = (sepsRaw.match(/(["'])(.*?)\1/g) || [])
+        .map(s => s.slice(1, -1))          // quita comillas
+        .filter(s => s.length > 0);
+
+      // Obtiene la columna real (case-insensitive)
+      const realKey = headerMap[colName.toLowerCase()] || colName;
+      const raw = r[realKey];
+      if (raw == null) { out[c.name] = ""; return; }
+
+      // Split por cualquiera de los separadores, quitar vacíos y trim
+      const splitter = seps.length
+        ? new RegExp(seps.map(escapeRegExp).join("|"), "g")
+        : /[, ]/g; // fallback: coma o espacio si no vinieran separadores
+
+      const tokens = String(raw)
+        .split(splitter)
+        .map(t => t.trim())
+        .filter(t => t !== "");
+
+      // Tomar tramo (1-based) y concatenar si count>1
+      const i0 = Math.max(0, start - 1);
+      const slice = tokens.slice(i0, i0 + count);
+
+      if (slice.length === 0) {
+        out[c.name] = "";
+      } else if (slice.length === 1) {
+        out[c.name] = slice[0];
+      } else {
+        out[c.name] = slice.join(" - ");
+      }
+    });
+
+
+    // ---- NUEVO: soportar mapeos compuestos "a - b - c" definidos en criterios.xlsx ----
+    criterios.forEach(c => {
+      const srcSpec = c.map?.[datasetKey];
+      if (!srcSpec) return;
+
+      // ¿Es compuesto? (separa por "-")
+      if (srcSpec.includes("-")) {
+        const parts = srcSpec.split("-").map(s => s.trim()).filter(Boolean);
+
+        // Obtiene el valor de cada parte con resolución case-insensitive
+        const partVals = parts.map(p => {
+          const keyLow = p.toLowerCase();
+          const realKey = headerMap[keyLow] || p; // cae al nombre tal cual si no está en el mapa
+          const v = r[realKey];
+          return (v == null) ? "" : String(v).trim();
+        });
+
+        // Concatena usando " - " SOLO con las partes no vacías
+        const joined = partVals.filter(x => x !== "").join(" - ");
+
+        // Escribe la variable normalizada con el nombre destino (c.name)
+        // Nota: si no hay ninguna parte con valor, deja vacío ("") para no romper tipos
+        out[c.name] = joined;
+      }
+    });
+
     return out;
   });
 }
@@ -279,9 +442,28 @@ function niceTicks(max, target = 5) {
 // Mantiene el ORDEN de aparición de las variables "Num suma" en la tabla (sin ordenar por valor).
 // Gráfico de barras (SVG) por variable con owner-color.
 // Añade: envoltura de etiquetas (tspan) y ancho máximo opcional.
-function BarsChart({ data, title, maxWidth = 350, collapsePct = 0.06 }) {
-  const base = (collapsePct == null) ? (data || []) : collapseSmall(data, collapsePct);
-  const prepared = withPalette(base);
+function BarsChart({
+  data,
+  title,
+  maxWidth = 350,
+  collapsePct = 0.06,
+  showLegend = true,
+  showBarLabels = false
+}) {
+
+  const base = (collapsePct == null)
+    ? (data || [])
+    : collapseSmall(data, collapsePct, OTHERS_LABEL);
+
+  // Fuerza “Otros” en gris ANTES de la paleta
+  const enforced = base.map(d => {
+    const isOtros = normStr(d.label).toLowerCase() === OTHERS_LABEL.toLowerCase();
+    return isOtros ? { ...d, color: OTHERS_COLOR } : d;
+  });
+
+  // La paleta respeta color preasignado 
+  const prepared = withPalette(enforced); 
+
   if (!prepared.length) {
     return (
       <div className="space-y-3 text-slate-700">
@@ -292,17 +474,24 @@ function BarsChart({ data, title, maxWidth = 350, collapsePct = 0.06 }) {
   }
 
   const maxVal = Math.max(1, ...prepared.map(d => d.value));
-  const fmtAxis = fmtMoney; // ticks con S/ y 0 decimales
+const fmtAxis = (v) => fmtM1(v); // ticks en millones (1 decimal)
 
   const marks = niceTicks(maxVal, 5);
   const yMax = marks[marks.length - 1] || maxVal;
 
   // Márgenes y altura dinámicos: banda para labels bajo el eje
   const widestTick = marks.map(fmtAxis).reduce((a, b) => (a.length > b.length ? a : b), "");
+
+  // Altura extra para etiquetas de 2 líneas (10px font + 11px de línea + holgura)
+  const lineH = 11;                    // debe coincidir con el dy de <tspan>
+  const maxLabelLines = showLegend ? 2 : 3;
+  const baseBelowAxis = 20;            // aire bajo la primera línea
+  const extraBottom = showBarLabels ? ((maxLabelLines - 1) * lineH + baseBelowAxis) : 0;
+
   const pad = {
     top: 36,
     right: 24,
-    bottom: 32, // ya no reservamos banda para etiquetas
+    bottom: 32 + extraBottom,
     left: Math.max(56, 10 + widestTick.length * 8)
   };
 
@@ -313,6 +502,39 @@ function BarsChart({ data, title, maxWidth = 350, collapsePct = 0.06 }) {
   const innerH = BASE_PLOT_H; // altura del área de barras fija
   const xStep  = innerW / prepared.length;
   const barW   = Math.min(52, xStep * 0.6);
+
+
+  // Envoltura en 2/3 líneas máximo (3 cuando NO hay leyenda), sensible al ancho real de la barra.
+  // Aprox: ~6px por carácter a font 10 => barW/6 chars por línea (con mínimos).
+  const wrapLabel = (txt) => {
+    const text = (txt ?? "").toString().trim();
+    const perLine = Math.max(8, Math.floor(barW / 6)); // 8 como piso
+    const maxLines = showLegend ? 2 : 3;               // ← 3 líneas si NO hay leyenda
+
+    // Si es una sola "palabra" muy larga, cortamos por segmentos
+    const chunkWord = (s, n) => s.match(new RegExp(`.{1,${n}}`, "g")) || [s];
+
+    const words = text.split(/\s+/).flatMap(w => {
+      return w.length > perLine ? chunkWord(w, perLine) : [w];
+    });
+
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const candidate = (cur ? cur + " " : "") + w;
+      if (candidate.length <= perLine) {
+        cur = candidate;
+      } else {
+        if (cur) lines.push(cur);
+        cur = w;
+        if (lines.length >= maxLines - 1) break; // dejamos el resto para la última línea
+      }
+    }
+    if (cur && lines.length < maxLines) lines.push(cur);
+
+    // Si quedaron palabras fuera, no añadimos más líneas (sin "…" para no ensuciar)
+    return lines.slice(0, maxLines);
+  };
 
   return (
     <div className="space-y-3 text-slate-700">
@@ -325,6 +547,19 @@ function BarsChart({ data, title, maxWidth = 350, collapsePct = 0.06 }) {
           role="img"
           aria-label={title || "Bar chart"}
         >
+        
+        <text
+          x={width - pad.right}
+          y={pad.top - 10}
+          textAnchor="end"
+          fontSize="11"
+          fill="currentColor"
+          opacity="0.6"
+        >
+          millones
+        </text>
+
+
           {/* Guías horizontales */}
           {marks.map((m, i) => {
             const y = height - pad.bottom - (innerH * (m / yMax));
@@ -349,26 +584,42 @@ function BarsChart({ data, title, maxWidth = 350, collapsePct = 0.06 }) {
             const y = height - pad.bottom - h;
             const valueY = Math.max(y - 6, pad.top + 12);
 
-            const baseline = height - pad.bottom + 18; // SIEMPRE debajo del eje
-
             return (
               <g key={d.label}>
                 <rect x={x} y={y} width={barW} height={h} rx="8" fill={d.color || "currentColor"} opacity="0.85" />
-                <text x={x + barW / 2} y={valueY} textAnchor="middle" fontSize="12">{fmtMoney(d.value)}</text>
+                <text x={x + barW / 2} y={valueY} textAnchor="middle" fontSize="12">{fmtM1(d.value)}</text>
+
+                {/* Etiqueta bajo la barra (solo en versus) */}
+                {showBarLabels && (
+                  <text
+                    x={x + barW / 2}
+                    y={height - pad.bottom + 10}  // más arriba para dejar aire abajo
+                    textAnchor="middle"
+                    fontSize="10"                 // más compacto
+                  >
+                    {wrapLabel(d.label).map((line, li) => (
+                      <tspan key={li} x={x + barW / 2} dy={li === 0 ? 0 : 11}>
+                        {line}
+                      </tspan>
+                    ))}
+                  </text>
+                )}
               </g>
             );
           })}
         </svg>
 
-        {/* Leyenda de colores (igual que PieChart) */}
-        <div className="mt-3 space-y-1">
+        {/* Leyenda (solo si se solicita) */}
+        {showLegend && (
+          <div className="mt-3 space-y-1">
           {prepared.map((d,i) => (
             <div key={i} className="flex items-center gap-2 text-sm">
               <span className="inline-block w-3 h-3 rounded-sm" style={{ background: d.color }} />
               <span className="break-words">{d.label}</span>
             </div>
           ))}
-        </div>
+          </div>
+        )}
 
       </div>
     </div>
@@ -400,13 +651,12 @@ function PieChart({ data, title, size = 280, maxWidth = 350 }) {
   }
 
   const cx = size / 2, cy = size / 2, r = size * 0.38;
-  let angleAcc = -Math.PI / 2;
   const toXY = (ang) => [cx + r * Math.cos(ang), cy + r * Math.sin(ang)];
 
   // Si hay un solo valor, dibuja un círculo completo con la etiqueta centrada
   if (colored.length === 1) {
     const d = colored[0];
-    const valTxt = fmtMoney(d.value);
+    const valTxt = fmtM1(d.value);
     const pctTxt = fmtPct0(1);
 
     return (
@@ -419,6 +669,18 @@ function PieChart({ data, title, size = 280, maxWidth = 350 }) {
             role="img"
             aria-label={title || "Pie chart"}
           >
+
+          <text
+            x={size - 8}
+            y={14}
+            textAnchor="end"
+            fontSize="11"
+            fill="currentColor"
+            opacity="0.6"
+          >
+            millones
+          </text>
+
             <circle cx={cx} cy={cy} r={r} fill={d.color} opacity="0.9" />
             {/* Etiqueta centrada (valor y 100%) con halo para legibilidad */}
             <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
@@ -456,6 +718,18 @@ function PieChart({ data, title, size = 280, maxWidth = 350 }) {
           role="img"
           aria-label={title || "Pie chart"}
         >
+
+        <text
+          x={size - 8}
+          y={14}
+          textAnchor="end"
+          fontSize="11"
+          fill="currentColor"
+          opacity="0.6"
+        >
+          millones
+        </text>
+
         {/* 1) DIBUJAR TODAS LAS PORCIONES */}
         {(() => {
           let aacc = -Math.PI / 2;
@@ -494,7 +768,7 @@ function PieChart({ data, title, size = 280, maxWidth = 350 }) {
             const lx = cx + rLabel * Math.cos(mid);
             const ly = cy + rLabel * Math.sin(mid);
             const pct = totalColored > 0 ? (d.value / totalColored) : 0;
-            const valTxt = fmtMoney(d.value);
+            const valTxt = fmtM1(d.value);
             const pctTxt = fmtPct0(pct);
 
             return (
@@ -550,7 +824,7 @@ function groupSum(rows, key, valueName) {
   for (const r of rows) {
     const k = normStr(r[key]) || "(vacío)";
     const raw = (valueName ? r[valueName] : undefined);
-    const v = parseNumberLoose(raw);
+    const v = parseNumberFixed(raw);
     acc.set(k, (acc.get(k) || 0) + (Number.isFinite(v) ? v : 0));
   }
   return [...acc.entries()]
@@ -558,19 +832,8 @@ function groupSum(rows, key, valueName) {
     .filter(d => Number.isFinite(d.value) && d.value > 0)
     .sort((a,b)=> b.value - a.value);
 }
-const topN = (arr, n=10) => arr.slice(0, n);
 
-// Buscar variable por nombre aproximado (sin tilde)
-function findVarByIncludes(criterios, needles=[]) {
-  const norm = (s) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
-  for (const c of (criterios||[])) {
-    const n = norm(c.name||"");
-    if (needles.some(nd => n.includes(nd))) return c.name;
-  }
-  return null;
-}
 
-// === Dashboard para CA ===
 // === Dashboard para CA ===
 function DashboardDataset({ dsName, rows, criterios }) {
   // ---- Clasificaciones segun "Tipo para individuales" ----
@@ -594,7 +857,7 @@ function DashboardDataset({ dsName, rows, criterios }) {
     c.tipoInd.toLowerCase() === "filtro metrica" && hasVar(c)
   );
   const metricDefs = metricDefsAll.filter(c => {
-    const total = rows.reduce((a, r) => a + parseNumberLoose(r[c.name]), 0);
+    const total = rows.reduce((a, r) => a + parseNumberFixed(r[c.name]), 0);
     return total > 0;
   });
   const metricOptions = metricDefs.map(c => c.name);
@@ -612,14 +875,13 @@ function DashboardDataset({ dsName, rows, criterios }) {
   const isNumSuma = (c) => c.tipoVersus === "Num suma" || c.tipoInd === "Num suma";
 
   // Totales básicos (PIA/PIM/DEV/Girado)
-  const totalDe = (k) => rows.reduce((a,r)=> a + parseNumberLoose(r[k]), 0);
+  const totalDe = (k) => rows.reduce((a,r)=> a + parseNumberFixed(r[k]), 0);
   const tot = {
     PIA: totalDe("PIA"),
     PIM: totalDe("PIM"),
     DEV: totalDe("DEV"),
     Girado: totalDe("Girado")
   };
-  const metricKey = metric || null; // null si no hay métricas definidas
 
   // ---------- RESUMEN ----------
   const formatResumenCelda = (c) => {
@@ -656,7 +918,7 @@ function DashboardDataset({ dsName, rows, criterios }) {
       {metricOptions.length > 0 && (
         <div className={`grid gap-4 ${metricOptions.length >= 4 ? "sm:grid-cols-4" : "sm:grid-cols-2"}`}>
           {metricOptions.map(m => {
-            const total = rows.reduce((a,r)=> a + parseNumberLoose(r[m]), 0);
+            const total = rows.reduce((a,r)=> a + parseNumberFixed(r[m]), 0);
             return (
               <div key={m} className="card p-4">
                 <div className="text-xs text-slate-500">{m} total</div>
@@ -830,13 +1092,19 @@ function HelpModal({ open, onClose }) {
 function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, onApply }) {
   const dsList = ["CA","CEPLAN","SIGA"].filter(ds => (perDatasetValues?.[ds]?.length || 0) > 0);
 
-  // Al abrir: si no hay selección previa -> marcar TODOS por defecto
+  // arriba del componente puedes declarar (opcional) para no repetir el string:
+  const SUBPRODUCTO_VAR = "Subproducto (AAO)";
+
   const buildInitial = () => {
     const o = {};
     for (const ds of dsList) {
       const cur = currentIncl?.[ds] || new Set();
       const allVals = (perDatasetValues?.[ds] || []).map(normStr);
-      o[ds] = (cur.size === 0) ? new Set(allVals) : new Set([...cur].map(normStr));
+
+      // Para TODOS los filtros (incluido Subproducto), si no hay selección previa: marcar TODO.
+      o[ds] = (cur.size === 0)
+        ? new Set(allVals)
+        : new Set([...cur].map(normStr));
     }
     return o;
   };
@@ -948,6 +1216,10 @@ const dsTabStyle = (ds, active) => ({
   color: active ? "#fff" : "#0f172a",
 });
 
+const isEmptyLabel = (s) => {
+  const t = normStr(s);
+  return !t || t.toLowerCase() === "(vacío)";
+};
 
 
 function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
@@ -964,6 +1236,38 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
     (c.map?.[leftName] || c.map?.[rightName])
   );
 
+  // ===== Filtros de métrica por COLUMNA =====
+  const metricCandidatesAll = (criterios || []).filter(c =>
+    (c.tipoInd || "").toLowerCase() === "filtro metrica" &&
+    (c.map?.[leftName] || c.map?.[rightName])
+  );
+
+  // Opciones por columna (sólo si existen en ese dataset y el total > 0 EN ESA COLUMNA)
+  const metricOptionsLeft = metricCandidatesAll
+    .filter(c => c.map?.[leftName])
+    .filter(c => leftRows.reduce((a, r) => a + parseNumberFixed(r[c.name]), 0) > 0)
+    .map(c => c.name);
+
+  const metricOptionsRight = metricCandidatesAll
+    .filter(c => c.map?.[rightName])
+    .filter(c => rightRows.reduce((a, r) => a + parseNumberFixed(r[c.name]), 0) > 0)
+    .map(c => c.name);
+
+  // Estado independiente por columna
+  const [metricLeft, setMetricLeft]   = React.useState(metricOptionsLeft[0]  || null);
+  const [metricRight, setMetricRight] = React.useState(metricOptionsRight[0] || null);
+
+  // Si cambian datasets u opciones, re-asegura que el valor sea válido
+  React.useEffect(() => {
+    if (!metricOptionsLeft.includes(metricLeft)) {
+      setMetricLeft(metricOptionsLeft[0] || null);
+    }
+    if (!metricOptionsRight.includes(metricRight)) {
+      setMetricRight(metricOptionsRight[0] || null);
+    }
+  }, [leftName, rightName, criterios, leftRows, rightRows, metricOptionsLeft, metricOptionsRight]); 
+
+
   const countLeft = leftRows.length;
   const countRight = rightRows.length;
 
@@ -972,8 +1276,8 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
     .map(c => {
       const leftHas = !!c.map?.[leftName];
       const rightHas = !!c.map?.[rightName];
-      const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberLoose(r[c.name]), 0);
-      const sumRight = rightRows.reduce((acc, r) => acc + parseNumberLoose(r[c.name]), 0);
+      const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberFixed(r[c.name]), 0);
+      const sumRight = rightRows.reduce((acc, r) => acc + parseNumberFixed(r[c.name]), 0);
 
       let owner = leftName;
       if (leftHas && !rightHas) owner = leftName;
@@ -1016,18 +1320,110 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
     );
   };
 
+  // Badge de monto SOLO para la segunda tabla de versus
+  const amountBoxStyle = {
+    display: "inline-block",
+    padding: "2px 6px",
+    background: "#ffffffff",      // slate-100-ish
+    border: "1px solid #E2E8F0",// slate-200-ish
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: 600,
+    lineHeight: 1
+  };
+  const Amount = ({ n }) => {
+    const v = Number(n) || 0;
+    return v > 0 ? <span style={amountBoxStyle}>{fmtMoney(v)}</span> : null;
+  };
+
   const renderListaRow = (c) => {
     const title = c.name;
-    const L = uniqueSorted(leftRows.map(r => r[title]));
-    const R = uniqueSorted(rightRows.map(r => r[title]));
+
+    // Fallback si alguna columna no tiene métrica válida
+    const noLeft  = !metricLeft;
+    const noRight = !metricRight;
+
+    if (noLeft || noRight) {
+      const L = uniqueSorted(leftRows.map(r => r[title]));
+      const R = uniqueSorted(rightRows.map(r => r[title]));
+      return (
+        <tr key={"lista-"+title} className="align-top border-t">
+          <td className="py-2 pr-2 font-medium">{title}</td>
+          <td className="py-2 px-3" style={dsStyle(leftName)}>
+            {noLeft ? (
+              <>
+                <div className="text-xs text-slate-500">Seleccione una métrica para {leftName}</div>
+                <PagedList items={L.map(normStr)} batch={3} />
+              </>
+            ) : (
+              <PagedList
+                items={groupSum(leftRows, title, metricLeft)
+                  .filter(d => !isEmptyLabel(d.label)) // ← también descarta "(vacío)"
+                  .map((d, i) => (
+                    <span key={"L-fallback-"+title+"-"+i}>
+                      {normStr(d.label)} <Amount n={d.value} />
+                    </span>
+                  ))}
+                batch={3}
+              />
+            )}
+          </td>
+          <td className="py-2 px-3" style={dsStyle(rightName)}>
+            {noRight ? (
+              <>
+                <div className="text-xs text-slate-500">Seleccione una métrica para {rightName}</div>
+                <PagedList items={R.map(normStr)} batch={3} />
+              </>
+            ) : (
+              <PagedList
+                items={groupSum(rightRows, title, metricRight)
+                  .filter(d => !isEmptyLabel(d.label)) // ← también descarta "(vacío)"
+                  .map((d, i) => (
+                    <span key={"R-fallback-"+title+"-"+i}>
+                      {normStr(d.label)} <Amount n={d.value} />
+                    </span>
+                  ))}
+                batch={3}
+              />
+            )}
+          </td>
+        </tr>
+      );
+    }
+
+    // Caso normal: ambas columnas con métrica activa
+    const Lg = groupSum(leftRows,  title, metricLeft)
+      .filter(d => !isEmptyLabel(d.label)); // ← excluye "" y "(vacío)"
+    const Rg = groupSum(rightRows, title, metricRight)
+      .filter(d => !isEmptyLabel(d.label)); // ← excluye "" y "(vacío)"
+
+    const Litems = Lg.map((d, i) => (
+      <span key={"L-"+title+"-"+i}>
+        {normStr(d.label) ? (
+          <>
+            {normStr(d.label)} <Amount n={d.value} />
+          </>
+        ) : null}
+      </span>
+    ));
+    const Ritems = Rg.map((d, i) => (
+      <span key={"R-"+title+"-"+i}>
+        {normStr(d.label) ? (
+          <>
+            {normStr(d.label)} <Amount n={d.value} />
+          </>
+        ) : null}
+      </span>
+    ));
+
     return (
       <tr key={"lista-"+title} className="align-top border-t">
         <td className="py-2 pr-2 font-medium">{title}</td>
         <td className="py-2 px-3" style={dsStyle(leftName)}>
-          <PagedList items={L.map(normStr)} batch={3} />
+          <PagedList items={Litems} batch={3} />
         </td>
         <td className="py-2 px-3" style={dsStyle(rightName)}>
-          <PagedList items={R.map(normStr)} batch={3} />
+          <PagedList items={Ritems} batch={3} />
         </td>
       </tr>
     );
@@ -1035,13 +1431,17 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
 
   const renderNumRow = (c) => {
     const title = c.name;
-    const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberLoose(r[title]), 0);
-    const sumRight = rightRows.reduce((acc, r) => acc + parseNumberLoose(r[title]), 0);
+    const sumLeft = leftRows.reduce((acc, r) => acc + parseNumberFixed(r[title]), 0);
+    const sumRight = rightRows.reduce((acc, r) => acc + parseNumberFixed(r[title]), 0);
     return (
       <tr key={"num-"+title} className="border-t">
         <td className="py-2 pr-2 font-medium">{title}</td>
-        <td className="py-2 px-3" style={dsStyle(leftName)}>{fmtMoney(sumLeft)}</td>
-        <td className="py-2 px-3" style={dsStyle(rightName)}>{fmtMoney(sumRight)}</td>
+        <td className="py-2 px-3" style={dsStyle(leftName)}>
+          {sumLeft > 0 && <Amount n={sumLeft} />}
+        </td>
+        <td className="py-2 px-3" style={dsStyle(rightName)}>
+          {sumRight > 0 && <Amount n={sumRight} />}
+        </td>
       </tr>
     );
   };
@@ -1078,6 +1478,37 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
         </div>
 
         <div className="card p-4">
+          {/* Encabezado: select por columna */}
+          {(metricOptionsLeft.length > 0 || metricOptionsRight.length > 0) && (
+            <div className="grid grid-cols-3 items-center mb-2 gap-2">
+              <div className="text-sm text-slate-600">Filtro métrica:</div>
+
+              <div className="flex items-center gap-2 justify-start">
+                <span className="text-xs text-slate-500">{leftName}</span>
+                <select
+                  className="input"
+                  value={metricLeft || ""}
+                  onChange={(e)=>setMetricLeft(e.target.value)}
+                  disabled={metricOptionsLeft.length === 0}
+                >
+                  {metricOptionsLeft.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2 justify-start">
+                <span className="text-xs text-slate-500">{rightName}</span>
+                <select
+                  className="input"
+                  value={metricRight || ""}
+                  onChange={(e)=>setMetricRight(e.target.value)}
+                  disabled={metricOptionsRight.length === 0}
+                >
+                  {metricOptionsRight.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-auto">
             <table className="table-modern">
               <colgroup>
@@ -1103,7 +1534,10 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
 
       <div className="card p-4">
         <BarsChart
-          data={barsData} collapsePct={null}
+          data={barsData}
+          collapsePct={null}
+          showLegend={false}
+          showBarLabels={true}
         />
       </div>
     </div>
@@ -1121,6 +1555,11 @@ function App() {
 
   const [raw, setRaw] = useState({ CA: [], CEPLAN: [], SIGA: [] });
   const [norm, setNorm] = useState({ CA: [], CEPLAN: [], SIGA: [] });
+
+  // Para aplicar el auto-filtro una sola vez por ciclo de carga
+  const [inclusions, setInclusions] = useState({});
+
+  const [autoSubprodApplied, setAutoSubprodApplied] = useState(false);
 
   // Routing simple por hash (#inicio | #resultados)
   const [route, setRoute] = useState("inicio");
@@ -1161,6 +1600,7 @@ function App() {
       if (criterios) {
         const normalized = normalizeDataset(data, ds, criterios);
         setNorm(prev => ({ ...prev, [ds]: normalized }));
+        setAutoSubprodApplied(false);
       }
     } catch (e) {
       console.error(e);
@@ -1180,6 +1620,85 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [criterios]);
 
+  // Auto-filtro para "Subproducto (AAO)" (aplica checks y ordena listas)
+  useEffect(() => {
+    if (!AUTO_FILTER_SUBPRODUCTO) return;
+    if (!criterios) return;
+    if (autoSubprodApplied) return;
+
+    const varName = "Subproducto (AAO)";
+    const hasVar =
+      criterios.some(c => c.name === varName && (c.map?.CA || c.map?.CEPLAN || c.map?.SIGA));
+    if (!hasVar) return;
+
+    // Deben existir los TRES datasets con filas
+    if (!(norm.CA.length && norm.CEPLAN.length && norm.SIGA.length)) return;
+
+    // Construye: dataset -> Map(clean -> Set de originales) para evitar duplicados
+    const seenOrderCA = [];
+    const seenCA = new Set();
+    const maps = { CA: new Map(), CEPLAN: new Map(), SIGA: new Map() };
+
+    const ingest = (ds, rows) => {
+      for (const r of rows) {
+        const original = normStr(r[varName]);
+        if (original === "") continue;
+        const cleaned = cleanSubproducto(ds, original);
+        if (!maps[ds].has(cleaned)) maps[ds].set(cleaned, new Set());
+        maps[ds].get(cleaned).add(original);
+
+        if (ds === "CA" && !seenCA.has(cleaned)) {
+          seenCA.add(cleaned);
+          seenOrderCA.push(cleaned); // orden de CA
+        }
+      }
+    };
+
+    ingest("CA", norm.CA);
+    ingest("CEPLAN", norm.CEPLAN);
+    ingest("SIGA", norm.SIGA);
+
+    // Intersección exacta (presentes en los tres)
+    const keysCA = new Set(maps.CA.keys());
+    const keysCE = new Set(maps.CEPLAN.keys());
+    const keysSI = new Set(maps.SIGA.keys());
+    const isInAll = (k) => keysCA.has(k) && keysCE.has(k) && keysSI.has(k);
+
+    const intersection = new Set([...keysCA].filter(isInAll));
+    if (intersection.size === 0) {
+      setAutoSubprodApplied(true);
+      return;
+    }
+
+    // Selecciones por dataset: todos los "originales" cuyo cleaned ∈ intersección
+    const sel = { CA: new Set(), CEPLAN: new Set(), SIGA: new Set() };
+    for (const ds of ["CA","CEPLAN","SIGA"]) {
+    for (const [cleaned, originalsSet] of maps[ds].entries()) {
+      if (!intersection.has(cleaned)) continue;
+      for (const o of originalsSet) sel[ds].add(normStr(o)); // marca TODOS los originales que caen en ese "clean"
+      }
+    }
+
+    // Establece inclusions iniciales sólo si no había selección previa del usuario
+    setInclusions(prev => {
+      const already = prev?.[varName];
+      if (already && (already.CA?.size || already.CEPLAN?.size || already.SIGA?.size)) {
+        return prev; // respeta selección manual existente
+      }
+      return {
+        ...prev,
+        [varName]: {
+          CA: sel.CA,
+          CEPLAN: sel.CEPLAN,
+          SIGA: sel.SIGA
+        }
+      };
+    });
+
+    setAutoSubprodApplied(true);
+  }, [AUTO_FILTER_SUBPRODUCTO, norm, criterios, autoSubprodApplied]);
+
+
   function computeStats(dsKey, rows, criterios) {
     if (!rows?.length) return { rows:0, nums:[] };
     const numCrits = (criterios || []).filter(c =>
@@ -1187,7 +1706,7 @@ function App() {
     );
     const nums = numCrits.map(c => {
       const arr = rows.map(r => r[c.name]);
-      const valid = arr.map(parseNumberLoose).filter(n => Number.isFinite(n));
+      const valid = arr.map(parseNumberFixed).filter(n => Number.isFinite(n));
       const sum = valid.reduce((a,b)=>a+b,0);
       const avg = valid.length ? sum/valid.length : 0;
       return { name:c.name, sum, avg };
@@ -1198,18 +1717,90 @@ function App() {
   const perVarValues = useMemo(() => {
     if (!criterios) return {};
     const out = {};
-    for (const c of filtroVars) {
-      out[c.name] = {
-        CA: c.map?.CA ? uniqueSorted(norm.CA.map(r => r[c.name])) : [],
-        CEPLAN: c.map?.CEPLAN ? uniqueSorted(norm.CEPLAN.map(r => r[c.name])) : [],
-        SIGA: c.map?.SIGA ? uniqueSorted(norm.SIGA.map(r => r[c.name])) : [],
+
+    // Helper para ordenar por:
+    // 1) checks primero (según inclusions[varName][ds])
+    // 2) orden de CA por "cleaned"
+    // 3) resto al final en el mismo orden de llegada
+    const orderForSubproducto = (varName, ds) => {
+      // Mapea "clean" -> Set de originales (para deduplicar)
+      const buildMap = (rows, dataset) => {
+        const m = new Map();
+        for (const r of rows) {
+          const orig = normStr(r[varName]);
+          if (!orig) continue;
+          const cl = cleanSubproducto(dataset, orig);
+          if (!m.has(cl)) m.set(cl, new Set());
+          m.get(cl).add(orig); // ← Set evita repetir originales
+        }
+        return m;
       };
+
+      const mapCA = buildMap(norm.CA, "CA");
+      const mapDS = buildMap(norm[ds], ds);
+
+      // Orden base: el orden de las claves "clean" vistas en CA
+      const caOrder = [...mapCA.keys()];
+
+      // Conjunto de seleccionados actuales (para ordenar seleccionados primero)
+      const selSet = inclusions?.[varName]?.[ds] || new Set();
+
+      const selected = [];
+      const notSelected = [];
+
+      // Helper para empujar únicos preservando orden
+      const pushList = (arr, values) => {
+        for (const v of values) arr.push(v);
+      };
+
+      // 1) Claves que existen en CA (en el orden de CA)
+      for (const cl of caOrder) {
+        const originals = mapDS.get(cl) ? [...mapDS.get(cl)] : [];
+        const sel = originals.filter(o => selSet.has(normStr(o)));
+        const rest = originals.filter(o => !selSet.has(normStr(o)));
+        pushList(selected, sel);
+        pushList(notSelected, rest);
+      }
+
+      // 2) Claves que están en DS pero no en CA (van al final)
+      for (const [cl, originalsSet] of mapDS.entries()) {
+        if (caOrder.includes(cl)) continue;
+        const originals = [...originalsSet];
+        const sel = originals.filter(o => selSet.has(normStr(o)));
+        const rest = originals.filter(o => !selSet.has(normStr(o)));
+        pushList(selected, sel);
+        pushList(notSelected, rest);
+      }
+
+      // 3) Deduplicar preservando orden (por si un mismo "original" salió en varias filas)
+      const seen = new Set();
+      const out = [];
+      for (const v of [...selected, ...notSelected]) {
+        const k = normStr(v);
+        if (!seen.has(k)) { seen.add(k); out.push(v); }
+      }
+      return out;
+    };
+
+    for (const c of filtroVars) {
+      if (c.name === "Subproducto (AAO)" && AUTO_FILTER_SUBPRODUCTO) {
+        out[c.name] = {
+          CA: c.map?.CA ? orderForSubproducto(c.name, "CA") : [],
+          CEPLAN: c.map?.CEPLAN ? orderForSubproducto(c.name, "CEPLAN") : [],
+          SIGA: c.map?.SIGA ? orderForSubproducto(c.name, "SIGA") : [],
+        };
+      } else {
+        out[c.name] = {
+          CA: c.map?.CA ? uniqueSorted(norm.CA.map(r => r[c.name])) : [],
+          CEPLAN: c.map?.CEPLAN ? uniqueSorted(norm.CEPLAN.map(r => r[c.name])) : [],
+          SIGA: c.map?.SIGA ? uniqueSorted(norm.SIGA.map(r => r[c.name])) : [],
+        };
+      }
     }
     return out;
-  }, [norm, criterios, filtroVars]);
+  }, [norm, criterios, filtroVars, inclusions]);
 
   // Inclusiones aplicadas por dataset
-  const [inclusions, setInclusions] = useState({});
   const filtered = useMemo(() => {
     const perDS = { CA: {}, CEPLAN: {}, SIGA: {} };
     for (const [varName, byDS] of Object.entries(inclusions)) {
@@ -1431,11 +2022,7 @@ function App() {
         open={!!filterVar}
         onClose={()=>setFilterVar(null)}
         varName={filterVar || ""}
-        perDatasetValues={filterVar ? {
-          CA: (criterios||[]).find(c=>c.name===filterVar)?.map?.CA ? uniqueSorted(norm.CA.map(r => r[filterVar])) : [],
-          CEPLAN: (criterios||[]).find(c=>c.name===filterVar)?.map?.CEPLAN ? uniqueSorted(norm.CEPLAN.map(r => r[filterVar])) : [],
-          SIGA: (criterios||[]).find(c=>c.name===filterVar)?.map?.SIGA ? uniqueSorted(norm.SIGA.map(r => r[filterVar])) : [],
-        } : {}}
+        perDatasetValues={filterVar ? (perVarValues[filterVar] || {}) : {}}
         currentIncl={{
           CA: new Set(inclusions[filterVar]?.CA || []),
           CEPLAN: new Set(inclusions[filterVar]?.CEPLAN || []),
