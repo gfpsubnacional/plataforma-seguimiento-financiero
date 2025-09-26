@@ -1689,7 +1689,7 @@ function App() {
         ...prev,
         [varName]: {
           CA: sel.CA,
-          CEPLAN: sel.CEPLAN,
+          CEPLAN: sel.CEPLAN, 
           SIGA: sel.SIGA
         }
       };
