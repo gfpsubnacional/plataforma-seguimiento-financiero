@@ -1064,7 +1064,7 @@ function HelpModal({ open, onClose }) {
                 Descarga el ejecutable{" "}
                     <a
                     className="link"
-                    href="https://drive.google.com/file/d/1m9zGHSTOg1mvc54K4oiX6a73O4Yg0CgP/view?usp=drive_link"
+                    href="https://drive.google.com/drive/folders/1G7oYRg7wXTElUSD_QN7zo1NOOnqGEifp?usp=drive_link"
                     target="_blank"
                     rel="noopener noreferrer"
                     >scraper.exe</a>
@@ -1079,7 +1079,7 @@ function HelpModal({ open, onClose }) {
         <div className="mt-4 flex items-center justify-end">
             <a
             className="btn"
-            href="https://https://drive.google.com/file/d/1m9zGHSTOg1mvc54K4oiX6a73O4Yg0CgP/view?usp=drive_link"
+            href="https://drive.google.com/drive/folders/1G7oYRg7wXTElUSD_QN7zo1NOOnqGEifp?usp=drive_link"
             target="_blank"
             rel="noopener noreferrer"
             >Descargar scraper.exe</a>
