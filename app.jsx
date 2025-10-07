@@ -18,6 +18,7 @@
 /* global Papa, XLSX */
 const { useState, useMemo, useEffect } = React;
 
+
 // === Formato EN MILLONES (1 decimal) SOLO PARA GRÁFICOS ===
 const toM   = (n) => (Number(n) || 0) / 1_000_000;
 const fmtM1 = (n) => toM(n).toLocaleString('en-US', {
@@ -224,6 +225,39 @@ async function loadCriterios() {
     }
   })).filter(x => x.name);
 }
+
+async function loadComparaciones() {
+  const res = await fetch("criterios.xlsx?ts=" + Date.now(), { cache: "no-store" });
+  if (!res.ok) throw new Error("No se pudo cargar criterios.xlsx");
+  const ab = await res.arrayBuffer();
+  const wb = XLSX.read(ab, { type: "array" });
+
+  const wanted = (wb.SheetNames || []).find(n => normStr(n).toLowerCase() === "comparaciones");
+  const shName = wanted || wb.SheetNames[1];
+  if (!shName) return [];
+
+  const sh = wb.Sheets[shName];
+  const rows = XLSX.utils.sheet_to_json(sh, { defval: null });
+
+  return rows.map(r => {
+    const agrupador = normStr(r["Agrupador"]);
+    const A         = normStr(r["A"]);
+    const B         = normStr(r["B"]);
+    const descTxt   = normStr(r['Etapa/Texto “desc”']) || normStr(r['Etapa/Texto "desc"']);
+    const incTxt    = normStr(r['Etapa/Texto “inc”'])  || normStr(r['Etapa/Texto "inc"']);
+    const umbral    = Number(r["Umbral"]);
+    const incl0     = isTruthySi(r["Incluir 0 vs +"]);
+    if (!agrupador || !A || !B) return null;
+    return {
+      agrupador,
+      A, B,
+      descTxt, incTxt,
+      umbral: Number.isFinite(umbral) ? umbral : 0.5,
+      includeZeroVsPositivo: !!incl0
+    };
+  }).filter(Boolean);
+}
+
 
 /* ==============================
    Lectura de archivos de usuario
@@ -818,6 +852,66 @@ function PieChart({ data, title, size = 280, maxWidth = 350 }) {
 }
 
 
+// ===== Alertas tempranas: helpers genéricos =====
+// Devuelve "a_mayor_umbral", "b_mayor_umbral" o null.
+function compareOver(aRaw, bRaw, umbral = 0.5, includeZero = true) {
+  const a = parseNumberFixed(aRaw);
+  const b = parseNumberFixed(bRaw);
+  const factor = 1 + Math.max(0, umbral);
+
+  // ambos 0/NaN => nada
+  if (!(a > 0) && !(b > 0)) return null;
+
+  // tratar 0 vs + como diferencia válida
+  if (includeZero) {
+    if (b === 0 && a > 0) return "a_mayor_umbral";
+    if (a === 0 && b > 0) return "b_mayor_umbral";
+  }
+
+  if (a > factor * b) return "a_mayor_umbral";
+  if (b > factor * a) return "b_mayor_umbral";
+  return null;
+}
+
+
+// Obtiene la clave de agrupación respetando la limpieza especial de Subproducto (AAO)
+function getGroupKeyFor(ds, row, groupVar) {
+  const val = row[groupVar];
+  if (groupVar === "Subproducto (AAO)") {
+    return cleanSubproducto(ds, val); // usa tu función existente (segundo elemento tras ": " en CA/CEPLAN)
+  }
+  return normStr(val);
+}
+
+function groupSumsAB(ds, rows, groupVar, A, B) {
+  const acc = new Map();
+  for (const r of rows) {
+    const k = getGroupKeyFor(ds, r, groupVar) || "(vacío)";
+    if (!acc.has(k)) acc.set(k, { A:0, B:0 });
+    const item = acc.get(k);
+    item.A += parseNumberFixed(r[A]);
+    item.B += parseNumberFixed(r[B]);
+  }
+  return acc; // Map(group => {A,B})
+}
+
+function pctChange(a, b) {
+  const A = Number(a) || 0, B = Number(b) || 0;
+  if (A === 0 && B === 0) return 0;
+  if (A === 0) return +Infinity;
+  return (B - A) / A;
+}
+
+// Título “bonito”: “Producto Proyecto …”
+function titleCase(s) {
+  const txt = normStr(s);
+  if (!txt) return txt;
+  return txt.split(" ").map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w).join(" ");
+}
+
+
+
+
 // === Helpers para el dashboard CA ===
 function groupSum(rows, key, valueName) {
   const acc = new Map();
@@ -832,6 +926,147 @@ function groupSum(rows, key, valueName) {
     .filter(d => Number.isFinite(d.value) && d.value > 0)
     .sort((a,b)=> b.value - a.value);
 }
+
+
+function AlertasTab({ datasets, rowsByDS, comparaciones }) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailData, setDetailData] = useState({ dataset:"", ruleLabel:"", entries:[] });
+
+  // agrupa reglas por "Agrupador"
+  const byGroup = (comparaciones || []).reduce((m, r) => {
+    (m[r.agrupador] ||= []).push(r);
+    return m;
+  }, {});
+
+  const sectionOrder = ["Producto proyecto","Centro de costo","Subproducto (AAO)"];
+  const groups = [
+    ...sectionOrder.filter(g => byGroup[g]),
+    ...Object.keys(byGroup).filter(g => !sectionOrder.includes(g))
+  ];
+
+  const openDetail = (dataset, ruleLabel, entries, meta) => {
+    setDetailData({ dataset, ruleLabel, entries, ...meta });
+    setDetailOpen(true);
+  };
+
+  return (
+    <div className="space-y-6">
+      {datasets.map(ds => {
+        const rows = rowsByDS[ds] || [];
+        if (!rows.length) return null;
+
+        // Construye tarjetas para este dataset
+        const cards = [];
+
+        for (const groupName of groups) {
+          const rules = byGroup[groupName] || [];
+
+          for (const r of rules) {
+            // Si A o B no existen en ninguna fila, saltar la regla
+            const hasAorB = rows.some(x => x[r.A] != null || x[r.B] != null);
+            if (!hasAorB) continue;
+
+            // sumar A y B por agrupador
+            const sums = groupSumsAB(ds, rows, groupName, r.A, r.B);
+
+            // clasificar y generar detalle
+            const incList = []; // B >> A
+            const decList = []; // A >> B
+            for (const [gk, {A,B}] of sums.entries()) {
+              const tag = compareOver(A, B, r.umbral, r.includeZeroVsPositivo);
+              if (tag === "a_mayor_umbral") {
+                decList.push({ groupKey: gk, A, B, diff: A - B, pct: pctChange(B, A) }); // reducción
+              } else if (tag === "b_mayor_umbral") {
+                incList.push({ groupKey: gk, A, B, diff: B - A, pct: pctChange(A, B) }); // aumento
+              }
+            }
+
+            // ordenar por magnitud de cambio
+            incList.sort((x,y)=> (y.diff || 0) - (x.diff || 0));
+            decList.sort((x,y)=> (y.diff || 0) - (x.diff || 0));
+
+            const countInc = incList.length;
+            const countDec = decList.length;
+
+            // construir textos bonitos
+            const prettyGroup = titleCase(groupName);
+            const prettyGroupFixed = prettyGroup
+              .replace(/^Producto proyecto$/i, "Producto Proyecto")
+              .replace(/aao/i, "AAO");
+            const incLabel = `${prettyGroupFixed}s con presupuesto aumentado en la etapa de ${r.incTxt}`;
+            const decLabel = `${prettyGroupFixed}s con presupuesto reducido en la etapa de ${r.descTxt}`;
+
+            // Solo crear tarjeta si hay conteo > 0
+            if (countInc > 0) {
+              cards.push({
+                key: `${ds}|${groupName}|${r.A}->${r.B}|inc`,
+                big: countInc,
+                text: incLabel,
+                onClick: () => openDetail(ds, incLabel, incList, { aLabel: r.A, bLabel: r.B })
+              });
+            }
+            if (countDec > 0) {
+              cards.push({
+                key: `${ds}|${groupName}|${r.A}->${r.B}|dec`,
+                big: countDec,
+                text: decLabel,
+                onClick: () => openDetail(ds, decLabel, decList, { aLabel: r.A, bLabel: r.B })
+              });
+            }
+          }
+        }
+
+        if (!cards.length) return null; // no muestres nada para este dataset si todo da 0/insuficiente
+
+        return (
+          <div key={ds} className="card p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm text-slate-600">Dataset</div>
+              <span className="badge" style={{background: DS_COLOR[ds], color:"#fff"}}>{ds}</span>
+            </div>
+
+            {/* tarjetas: grid auto-ajustable */}
+            <div className="grid xl:grid-cols-4 lg:grid-cols-3 sm:grid-cols-2 grid-cols-1 gap-4">
+              {cards.map(c => (
+              <button
+                key={c.key}
+                className="border rounded-xl p-4 hover:shadow-md transition"
+                onClick={c.onClick}
+                style={{ borderColor: DS_COLOR[ds], background: DS_BG[ds] }}
+              >
+                <div className="flex items-start gap-3">
+                  <div
+                    className="shrink-0 text-6xl md:text-7xl font-black leading-none px-2 -my-1 tracking-tight"
+                    style={{ color: DS_COLOR[ds] }}
+                    aria-label="conteo"
+                  >
+                    {c.big}
+                  </div>
+                  <div className="text-sm text-slate-800 leading-snug">
+                    {c.text}
+                  </div>
+                </div>
+              </button>
+              ))}
+            </div>
+
+            {/* Modal detalle */}
+            <AlertDetailModal
+              open={detailOpen}
+              onClose={()=>setDetailOpen(false)}
+              dataset={detailData.dataset}
+              ruleLabel={detailData.ruleLabel}
+              entries={detailData.entries}
+              aLabel={detailData.aLabel}
+              bLabel={detailData.bLabel}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 
 
 // === Dashboard para CA ===
@@ -1033,8 +1268,16 @@ function UploadCard({ label, accept, onFile, ds }) {
 function HelpModal({ open, onClose }) {
   if (!open) return null;
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal max-w-3xl" onClick={(e)=>e.stopPropagation()}>
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.35)", overflowY:"auto" }}
+    >
+      <div
+        className="modal max-w-3xl"
+        onClick={(e)=>e.stopPropagation()}
+        style={{ margin:"5vh auto", maxHeight:"90vh", overflow:"auto" }}
+      >
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold">Ayuda</h3>
           <button className="btn-alt" onClick={onClose}>Cerrar</button>
@@ -1134,8 +1377,16 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e)=>e.stopPropagation()}>
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.35)", overflowY:"auto" }}
+    >
+      <div
+        className="modal"
+        onClick={(e)=>e.stopPropagation()}
+        style={{ margin:"5vh auto", maxHeight:"90vh", overflow:"auto" }}
+      >
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold">Filtrar “{varName}”</h3>
           <button className="btn-alt" onClick={onClose}>Cerrar</button>
@@ -1178,6 +1429,57 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
         <div className="mt-4 flex items-center justify-end gap-2">
           <button className="btn-alt" onClick={onClose}>Cancelar</button>
           <button className="btn" onClick={() => onApply(local)}>Aplicar filtros</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+function AlertDetailModal({ open, onClose, dataset, ruleLabel, entries, aLabel = "A", bLabel = "B" }) {
+  if (!open) return null;
+  // entries: [{ groupKey, A, B, diff, pct }]
+  const safeEntries = entries || [];
+  return (
+    <div
+      className="modal-backdrop"
+      onClick={onClose}
+      style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.35)", overflowY:"auto" }}
+    >
+      <div
+        className="modal max-w-4xl"
+        onClick={(e)=>e.stopPropagation()}
+        style={{ margin:"5vh auto", maxHeight:"90vh", overflow:"auto" }}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold">{dataset} · {ruleLabel}</h3>
+          <button className="btn-alt" onClick={onClose}>Cerrar</button>
+        </div>
+        <div className="overflow-auto">
+          <table className="table-modern w-full">
+            <thead>
+              <tr>
+                <th className="text-left">Agrupador</th>
+                <th className="text-right">Monto {aLabel}</th>
+                <th className="text-right">Monto {bLabel}</th>
+                <th className="text-right">Δ</th>
+                <th className="text-right">% cambio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {safeEntries.length ? safeEntries.map((e,i)=>(
+                <tr key={i} className="border-t">
+                  <td className="py-2 pr-2">{e.groupKey}</td>
+                  <td className="py-2 px-2 text-right">{fmtMoney(e.A)}</td>
+                  <td className="py-2 px-2 text-right">{fmtMoney(e.B)}</td>
+                  <td className="py-2 px-2 text-right">{fmtMoney(e.diff)}</td>
+                  <td className="py-2 px-2 text-right">{Number.isFinite(e.pct) ? fmtPct0(e.pct) : "∞"}</td>
+                </tr>
+              )) : (
+                <tr><td colSpan="5" className="py-3 text-slate-500">Sin filas para mostrar.</td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1552,6 +1854,7 @@ function App() {
   const [caFile, setCaFile] = useState(null);
   const [ceFile, setCeFile] = useState(null);
   const [siFile, setSiFile] = useState(null);
+  const [comparaciones, setComparaciones] = useState([]);
 
   const [raw, setRaw] = useState({ CA: [], CEPLAN: [], SIGA: [] });
   const [norm, setNorm] = useState({ CA: [], CEPLAN: [], SIGA: [] });
@@ -1575,10 +1878,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    loadCriterios().then(setCriterios).catch(e => {
-      console.error(e);
-      alert("No se pudo leer criterios.xlsx. Colócalo junto a index.html.");
-    });
+    Promise.all([loadCriterios(), loadComparaciones()])
+      .then(([crit, comp]) => { setCriterios(crit); setComparaciones(comp); })
+      .catch(e => {
+        console.error(e);
+        alert("No se pudo leer criterios.xlsx. Colócalo junto a index.html.");
+      });
   }, []);
 
   const filtroVars = useMemo(() => (criterios || []).filter(c => c.filtro), [criterios]);
@@ -1990,6 +2295,13 @@ function App() {
               <button className={`tab ${activeTab==="CA_CEPLAN" ? "tab-active" : ""}`} onClick={()=>setActiveTab("CA_CEPLAN")}>CA vs CEPLAN</button>
               <button className={`tab ${activeTab==="CA_SIGA" ? "tab-active" : ""}`} onClick={()=>setActiveTab("CA_SIGA")}>CA vs SIGA</button>
               <button className={`tab ${activeTab==="CEPLAN_SIGA" ? "tab-active" : ""}`} onClick={()=>setActiveTab("CEPLAN_SIGA")}>CEPLAN vs SIGA</button>
+              <button
+                className={`tab ${activeTab==="ALERTAS" ? "tab-active" : ""}`}
+                onClick={()=>setActiveTab("ALERTAS")}
+              >
+                Alertas tempranas
+              </button>
+
             </div>
             <div className="flex items-center gap-2">
               <button className="btn-alt" onClick={()=>setHelpOpen(true)}>Ayuda</button>
@@ -1997,7 +2309,13 @@ function App() {
             </div>
           </div>
 
-          {["CA","CEPLAN","SIGA"].includes(activeTab) ? (
+          {activeTab === "ALERTAS" ? (
+            <AlertasTab
+              datasets={["CA","CEPLAN","SIGA"]}
+              rowsByDS={filtered}
+              comparaciones={comparaciones}
+            />
+          ) : (["CA","CEPLAN","SIGA"].includes(activeTab) ? (
             <DashboardDataset
               dsName={activeTab}
               rows={filtered[activeTab]}
@@ -2011,7 +2329,7 @@ function App() {
               rightRows={filtered[activeLeftRight[1]]}
               criterios={criterios || []}
             />
-          )}
+          ))}
         </section>
       )}
 
