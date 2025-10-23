@@ -895,6 +895,38 @@ function groupSumsAB(ds, rows, groupVar, A, B) {
   return acc; // Map(group => {A,B})
 }
 
+// === Agrupa por clave "limpia" SOLO para comparar, pero MUESTRA la etiqueta original con código ===
+function groupSumForCompare(ds, rows, key, valueName) {
+  const acc = new Map();                 // keyLimpia -> { sum, display }
+  const displaySeen = new Map();         // keyLimpia -> primer original visto (con código)
+
+  for (const r of (rows || [])) {
+    const original = normStr(r[key]);    // etiqueta original (con código)
+    if (original === "") continue;
+
+    // clave de agrupación (solo limpiamos "Subproducto (AAO)")
+    const k = (key === "Subproducto (AAO)")
+      ? (cleanSubproducto(ds, original) || "(vacío)")
+      : original; // otras variables se agrupan por el original
+
+    const v = parseNumberFixed(valueName ? r[valueName] : undefined);
+
+    if (!acc.has(k)) acc.set(k, { sum: 0, display: original });
+    const item = acc.get(k);
+    item.sum += Number.isFinite(v) ? v : 0;
+
+    // Conserva el primer "original" encontrado como etiqueta de muestra
+    if (!displaySeen.has(k)) displaySeen.set(k, original);
+  }
+
+  // Devuelve [{label: etiquetaOriginalConCodigo, value: sum}] ordenado desc
+  return [...acc.entries()]
+    .map(([k, { sum }]) => ({ label: displaySeen.get(k) || k, value: sum }))
+    .filter(d => Number.isFinite(d.value) && d.value > 0)
+    .sort((a, b) => b.value - a.value);
+}
+
+
 function pctChange(a, b) {
   const A = Number(a) || 0, B = Number(b) || 0;
   if (A === 0 && B === 0) return 0;
@@ -1286,18 +1318,18 @@ function HelpModal({ open, onClose }) {
         <div className="space-y-4 text-sm">
           <div>
             <h4 className="font-medium mb-1">
-              ¿Cómo obtener los datos de <span className="font-semibold">SIGA</span> (TXT con tabs)?
+              ¿Cómo obtener los datos de <span className="font-semibold">SIGA</span>?
             </h4>
             <div className="p-3 rounded-lg bg-slate-50 border text-slate-700">
-              {/* ← Completar con el paso a paso específico del SIGA → */}
-              <ol className="list-decimal list-inside space-y-1">
-                <li><em>Instrucción 1 (pendiente)…</em></li>
-                <li><em>Instrucción 2 (pendiente)…</em></li>
-                <li><em>Exportar.</em></li>
-              </ol>
+              <div style={{ textAlign: "center", width: "100%" }}>
+                <img
+                  src="images/ayudasiga.png"
+                  alt="Ayuda SIGA"
+                  style={{ maxWidth: "100%", height: "auto", borderRadius: "8px" }}
+                />
+              </div>
             </div>
           </div>
-
           <div>
             <h4 className="font-medium mb-1">
               ¿Cómo obtener <span className="font-semibold">CEPLAN</span> y <span className="font-semibold">CA</span> (CSV)?
@@ -1354,9 +1386,75 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
 
   const [local, setLocal] = useState(buildInitial);
 
+  // --- Base de selección congelada para aplicar presets SOBRE lo que ya existe:
+  const baseSelectionRef = React.useRef(buildInitial());
+
+  // Detecta preset a partir de una selección (ambos / solo 2* / solo 3*)
+  function detectPreset(selByDS) {
+    const all = ["CA","CEPLAN","SIGA"];
+    const only = (prefix) => all.every(ds => {
+      const s = selByDS[ds] || new Set();
+      if (s.size === 0) return false;
+      for (const v of s) if (!normStr(v).startsWith(prefix)) return false;
+      return true;
+    });
+    const equalsBase = all.every(ds => {
+      const a = selByDS[ds] || new Set();
+      const b = baseSelectionRef.current[ds] || new Set();
+      if (a.size !== b.size) return false;
+      for (const v of a) if (!b.has(v)) return false;
+      return true;
+    });
+
+    if (equalsBase) return { ambos:true, proy:false, act:false };
+    if (only("2")) return { ambos:false, proy:true, act:false };
+    if (only("3")) return { ambos:false, proy:false, act:true };
+    return { ambos:false, proy:false, act:false }; // personalizado
+  }
+
+  // Estado del preset visible (tres checks arriba)
+  const [ppPreset, setPPPreset] = useState(detectPreset(buildInitial()));
+
+  // Aplica un preset "ambos" | "proy" | "act" SOBRE baseSelectionRef
+  function applyPreset(preset) {
+    const base = baseSelectionRef.current;
+    const out = { CA:new Set(), CEPLAN:new Set(), SIGA:new Set() };
+    const keep = (s) => {
+      if (preset === "ambos") return true;
+      if (preset === "proy")  return normStr(s).startsWith("Producto/Proyecto 2");
+      if (preset === "act")   return normStr(s).startsWith("Producto/Proyecto 3");
+      return true;
+    };
+    for (const ds of ["CA","CEPLAN","SIGA"]) {
+      (base[ds] || new Set()).forEach(v => { if (keep(v)) out[ds].add(v); });
+    }
+    setLocal(out);
+    setPPPreset({
+      ambos: preset === "ambos",
+      proy:  preset === "proy",
+      act:   preset === "act"
+    });
+  }
+
+  // Click en los checks de preset (mutuamente excluyentes)
+  function applyPresetToggle(which) {
+    // Si ya está activo, lo apago y quedo en "personalizado" (sin presets)
+    if ((which === "ambos" && ppPreset.ambos) ||
+        (which === "proy"  && ppPreset.proy)  ||
+        (which === "act"   && ppPreset.act)) {
+      setPPPreset({ ambos:false, proy:false, act:false });
+      return;
+    }
+    applyPreset(which === "ambos" ? "ambos" : which === "proy" ? "proy" : "act");
+  }
+
+
   useEffect(() => {
     if (open) setLocal(buildInitial());
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    // refresca la base y el preset detectado cada vez que se abre
+    baseSelectionRef.current = buildInitial();
+    setPPPreset(detectPreset(baseSelectionRef.current));
   }, [open, varName, perDatasetValues, currentIncl]);
 
   if (!open) return null;
@@ -1368,6 +1466,8 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
       if (copy.has(key)) copy.delete(key); else copy.add(key);
       return { ...prev, [ds]: copy };
     });
+    // Al tocar manualmente, desactiva los presets
+    setPPPreset({ ambos:false, proy:false, act:false });
   };
 
   const bulk = (ds, type) => {
@@ -1391,6 +1491,40 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
           <h3 className="text-lg font-semibold">Filtrar “{varName}”</h3>
           <button className="btn-alt" onClick={onClose}>Cerrar</button>
         </div>
+
+        {/* Filtro adicional solo para "Producto proyecto" */}
+        {varName === "Producto proyecto" && (
+          <div className="mb-3 p-3 rounded-lg border bg-slate-50">
+            <div className="text-sm font-medium mb-1">Presets rápidos</div>
+            <div className="flex flex-wrap gap-4 text-sm">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={ppPreset.ambos}
+                  onChange={() => applyPresetToggle("ambos")}
+                />
+                <span>Proyectos y Actividades</span>
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={ppPreset.proy}
+                  onChange={() => applyPresetToggle("proy")}
+                />
+                <span>Solo Proyectos</span>
+              </label>
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={ppPreset.act}
+                  onChange={() => applyPresetToggle("act")}
+                />
+                <span>Solo Actividades</span>
+              </label>
+            </div>
+          </div>
+        )}
+
 
         {dsList.length === 0 && (
           <div className="text-sm text-slate-500">No hay datasets con esta variable.</div>
@@ -1428,7 +1562,19 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <button className="btn-alt" onClick={onClose}>Cancelar</button>
-          <button className="btn" onClick={() => onApply(local)}>Aplicar filtros</button>
+          <button
+            className="btn"
+            onClick={() => {
+              // Ahora 'local' YA contiene la selección final (sea por preset o manual)
+              onApply({
+                CA: new Set(local.CA || []),
+                CEPLAN: new Set(local.CEPLAN || []),
+                SIGA: new Set(local.SIGA || []),
+              });
+            }}
+          >
+            Aplicar filtros
+          </button>
         </div>
       </div>
     </div>
@@ -1436,7 +1582,96 @@ function FilterModal({ open, onClose, varName, perDatasetValues, currentIncl, on
 }
 
 
+function HeaderChecklist({ title, values = [], selected, onChange }) {
+  const [open, setOpen] = React.useState(false);
+
+  const ref = React.useRef(null);
+
+  // Cierra si se hace click fuera
+  React.useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const uniq = React.useMemo(() => {
+    const s = new Set(values.map(v => normStr(v)));
+    return [...s].sort((a,b)=> a.localeCompare(b,"es",{numeric:true,sensitivity:"base"}));
+  }, [values]);
+
+  const allSelected = uniq.length > 0 && selected.size === uniq.length;
+
+  const toggleValue = (val) => {
+    const k = normStr(val);
+    const next = new Set(selected);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    onChange(next);
+  };
+
+  return (
+    <div ref={ref} className="relative inline-block">
+      <button className="btn-alt text-xs" onClick={()=>setOpen(o=>!o)}>{title} ▾</button>
+      {open && (
+        <div className="absolute mt-1 z-20 bg-white border rounded-md shadow-lg p-2 w-64 max-h-80 overflow-auto">
+          <div className="flex items-center justify-between mb-2">
+            <button className="btn-alt text-xs" onClick={() => onChange(new Set(uniq))}>Todo</button>
+            <button className="btn-alt text-xs" onClick={() => onChange(new Set())}>Limpiar</button>
+          </div>
+          <div className="space-y-1">
+            {uniq.map((v,i)=>(
+              <label key={i} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={selected.has(normStr(v))} onChange={()=>toggleValue(v)} />
+                <span className="break-words">{v || <i>(vacío)</i>}</span>
+              </label>
+            ))}
+            {uniq.length === 0 && <div className="text-xs text-slate-500">Sin valores</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 function AlertDetailModal({ open, onClose, dataset, ruleLabel, entries, aLabel = "A", bLabel = "B" }) {
+  // Sets de filtro por columna (tipo Excel)
+  const [selAgr, setSelAgr] = React.useState(new Set()); // Agrupador
+  const [selA, setSelA]     = React.useState(new Set()); // Monto A (formateado)
+  const [selB, setSelB]     = React.useState(new Set()); // Monto B (formateado)
+
+  const allAgr = React.useMemo(() => (entries || []).map(e => normStr(e.groupKey)), [entries]);
+  const allA   = React.useMemo(() => (entries || []).map(e => fmtMoney(e.A)), [entries]);
+  const allB   = React.useMemo(() => (entries || []).map(e => fmtMoney(e.B)), [entries]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    setSelAgr(new Set(allAgr));
+    setSelA(new Set(allA));
+    setSelB(new Set(allB));
+  }, [open, allAgr, allA, allB]);
+
+  const matches = (e) => {
+    const agrOK = selAgr.size === 0 ? true : selAgr.has(normStr(e.groupKey));
+    const aOK   = selA.size   === 0 ? true : selA.has(fmtMoney(e.A));
+    const bOK   = selB.size   === 0 ? true : selB.has(fmtMoney(e.B));
+    return agrOK && aOK && bOK;
+  };
+
+  const filteredEntries = (entries || []).filter(matches);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (ev) => { if (ev.key === "Escape") onClose?.(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+
   if (!open) return null;
   // entries: [{ groupKey, A, B, diff, pct }]
   const safeEntries = entries || [];
@@ -1455,19 +1690,47 @@ function AlertDetailModal({ open, onClose, dataset, ruleLabel, entries, aLabel =
           <h3 className="text-lg font-semibold">{dataset} · {ruleLabel}</h3>
           <button className="btn-alt" onClick={onClose}>Cerrar</button>
         </div>
+
         <div className="overflow-auto">
           <table className="table-modern w-full">
             <thead>
               <tr>
-                <th className="text-left">Agrupador</th>
-                <th className="text-right">Monto {aLabel}</th>
-                <th className="text-right">Monto {bLabel}</th>
+                <th className="text-left">
+                  <div className="flex items-center justify-between">
+                    <span>Agrupador</span>
+                    <HeaderChecklist
+                      values={allAgr}
+                      selected={selAgr}
+                      onChange={setSelAgr}
+                    />
+                  </div>
+                </th>
+                <th className="text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <span>Monto {aLabel}</span>
+                    <HeaderChecklist
+                      values={allA}
+                      selected={selA}
+                      onChange={setSelA}
+                    />
+                  </div>
+                </th>
+                <th className="text-right">
+                  <div className="flex items-center justify-end gap-2">
+                    <span>Monto {bLabel}</span>
+                    <HeaderChecklist
+                      values={allB}
+                      selected={selB}
+                      onChange={setSelB}
+                    />
+                  </div>
+                </th>
                 <th className="text-right">Δ</th>
                 <th className="text-right">% cambio</th>
               </tr>
             </thead>
             <tbody>
-              {safeEntries.length ? safeEntries.map((e,i)=>(
+              {filteredEntries.length ? filteredEntries.map((e,i)=>(
                 <tr key={i} className="border-t">
                   <td className="py-2 pr-2">{e.groupKey}</td>
                   <td className="py-2 px-2 text-right">{fmtMoney(e.A)}</td>
@@ -1659,7 +1922,7 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
               </>
             ) : (
               <PagedList
-                items={groupSum(leftRows, title, metricLeft)
+                  items={groupSumForCompare(leftName, leftRows, title, metricLeft)
                   .filter(d => !isEmptyLabel(d.label)) // ← también descarta "(vacío)"
                   .map((d, i) => (
                     <span key={"L-fallback-"+title+"-"+i}>
@@ -1678,7 +1941,7 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
               </>
             ) : (
               <PagedList
-                items={groupSum(rightRows, title, metricRight)
+                  items={groupSumForCompare(rightName, rightRows, title, metricRight)
                   .filter(d => !isEmptyLabel(d.label)) // ← también descarta "(vacío)"
                   .map((d, i) => (
                     <span key={"R-fallback-"+title+"-"+i}>
@@ -1691,13 +1954,14 @@ function VersusTable({ leftName, rightName, leftRows, rightRows, criterios }) {
           </td>
         </tr>
       );
-    }
+    } 
 
-    // Caso normal: ambas columnas con métrica activa
-    const Lg = groupSum(leftRows,  title, metricLeft)
-      .filter(d => !isEmptyLabel(d.label)); // ← excluye "" y "(vacío)"
-    const Rg = groupSum(rightRows, title, metricRight)
-      .filter(d => !isEmptyLabel(d.label)); // ← excluye "" y "(vacío)"
+    // Caso normal: ambas columnas con métrica activa (agrupa limpiando solo para comparar,
+    // pero mostrando SIEMPRE la etiqueta original con código)
+    const Lg = groupSumForCompare(leftName,  leftRows,  title, metricLeft)
+      .filter(d => !isEmptyLabel(d.label));
+    const Rg = groupSumForCompare(rightName, rightRows, title, metricRight)
+      .filter(d => !isEmptyLabel(d.label));
 
     const Litems = Lg.map((d, i) => (
       <span key={"L-"+title+"-"+i}>
